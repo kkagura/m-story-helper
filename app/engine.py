@@ -1,4 +1,4 @@
-"""Shared service lifecycle; capture and recognition are not implemented yet."""
+"""Shared service lifecycle and implemented capabilities, separate from active sessions."""
 
 import logging
 import time
@@ -23,8 +23,9 @@ class EngineStatus(BaseModel):
 
 
 class EngineService:
-    def __init__(self) -> None:
+    def __init__(self, *, capture_available: bool = False) -> None:
         self._started_at: float | None = None
+        self._capture_available = capture_available
 
     def start(self) -> None:
         if self._started_at is None:
@@ -42,5 +43,5 @@ class EngineService:
             uptime_seconds=(
                 round(time.monotonic() - started_at, 3) if started_at is not None else 0.0
             ),
-            capabilities=Capabilities(),
+            capabilities=Capabilities(capture=self._capture_available),
         )

@@ -18,6 +18,11 @@ class Settings(BaseModel):
     dev_frontend_port: StrictInt = Field(default=5173, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     web_dist: str = "web/dist"
+    media_negotiation_timeout_seconds: float = Field(default=15, ge=1, le=60)
+    media_connect_timeout_seconds: float = Field(default=15, ge=1, le=60)
+    media_frame_timeout_seconds: float = Field(default=8, ge=1, le=60)
+    media_heartbeat_timeout_seconds: float = Field(default=10, ge=2, le=60)
+    media_max_frame_pixels: StrictInt = Field(default=8_294_400, ge=1, le=33_177_600)
 
     @property
     def web_dist_path(self) -> Path:

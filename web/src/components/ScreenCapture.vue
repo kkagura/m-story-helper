@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { MediaConnection } from '../media'
+import type { MediaStatus } from '../media'
 
 type CaptureState = 'idle' | 'selecting' | 'sharing' | 'muted' | 'stopped' | 'error'
 
@@ -13,11 +15,93 @@ const notice = ref('')
 const sourceType = ref('未知')
 const width = ref(0)
 const height = ref(0)
+const mediaStatus = ref<MediaStatus | null>(null)
+const mediaError = ref('')
+const transmitting = ref(false)
+const saving = ref(false)
+const snapshotNotice = ref('')
+const disconnecting = ref(false)
 
 let stream: MediaStream | null = null
 let detachTrackListeners: (() => void) | null = null
 let generation = 0
 let disposed = false
+let connection: MediaConnection | null = null
+let cleanup: Promise<void> = Promise.resolve()
+
+const mediaLabel = computed(() => {
+  if (disconnecting.value) return '正在关闭'
+  if (mediaError.value) return '传输已停止'
+  if (transmitting.value) return '正在连接'
+  if (mediaStatus.value?.state === 'receiving') return 'Python 正在接收'
+  if (connection) return '等待首帧'
+  return '未连接 Python'
+})
+
+function stopTransmission() {
+  const current = connection
+  connection = null
+  transmitting.value = false
+  mediaStatus.value = null
+  snapshotNotice.value = ''
+  if (current) {
+    disconnecting.value = true
+    cleanup = current.stop().finally(() => {
+      if (!disposed) disconnecting.value = false
+    })
+  }
+}
+
+async function startTransmission() {
+  if (!stream || connection || disposed || disconnecting.value || transmitting.value) return
+  const currentStream = stream
+  const captureGeneration = generation
+  mediaError.value = ''
+  mediaStatus.value = null
+  snapshotNotice.value = ''
+  transmitting.value = true
+  await cleanup
+  if (disposed || stream !== currentStream || generation !== captureGeneration) return
+  try {
+    const current = new MediaConnection(
+      status => {
+        if (connection === current && !disposed) mediaStatus.value = status
+      },
+      message => {
+        if (connection === current && !disposed) {
+          mediaError.value = message
+          stopTransmission()
+        }
+      },
+    )
+    connection = current
+    await current.start(currentStream)
+  } catch (cause) {
+    if (!disposed && generation === captureGeneration) {
+      mediaError.value = cause instanceof Error ? cause.message : '无法创建视频连接。'
+      stopTransmission()
+    }
+  } finally {
+    if (!disposed && generation === captureGeneration) transmitting.value = false
+  }
+}
+
+async function saveSnapshot() {
+  const current = connection
+  if (!current || saving.value) return
+  saving.value = true
+  snapshotNotice.value = ''
+  try {
+    await current.downloadSnapshot()
+    if (connection === current && !disposed) snapshotNotice.value = '后端截图已下载。'
+  } catch (cause) {
+    if (connection === current && !disposed) {
+      snapshotNotice.value = cause instanceof Error ? cause.message : '保存截图失败。'
+    }
+  } finally {
+    if (!disposed) saving.value = false
+  }
+}
 
 const stateLabel = computed(() => ({
   idle: '尚未共享',
@@ -43,6 +127,7 @@ function stopTracks(value: MediaStream) {
 }
 
 function releaseStream() {
+  stopTransmission()
   detachTrackListeners?.()
   detachTrackListeners = null
   if (stream) stopTracks(stream)
@@ -62,6 +147,7 @@ function stopSharing(message = '已停止共享，可以重新选择窗口。') 
   releaseStream()
   state.value = 'stopped'
   error.value = ''
+  mediaError.value = ''
   notice.value = message
 }
 
@@ -98,7 +184,7 @@ function describeError(cause: unknown): string {
 }
 
 async function selectWindow() {
-  if (pending.value || hasStream.value || disposed) return
+  if (pending.value || hasStream.value || disposed || disconnecting.value) return
   unavailableReason.value = checkSupport()
   if (unavailableReason.value) return
 
@@ -106,6 +192,7 @@ async function selectWindow() {
   pending.value = true
   state.value = 'selecting'
   error.value = ''
+  mediaError.value = ''
   notice.value = '请在浏览器选择器中选择要预览的应用窗口。'
 
   try {
@@ -152,6 +239,9 @@ async function selectWindow() {
         throw new Error('浏览器无法播放预览，已释放共享资源，请重新选择。')
       }
     }
+    if (!disposed && generation === requestGeneration && stream === selected) {
+      void startTransmission()
+    }
   } catch (cause) {
     if (!disposed && generation === requestGeneration) {
       releaseStream()
@@ -188,14 +278,25 @@ onBeforeUnmount(() => {
     </div>
     <div class="capture-actions">
       <button
-        :disabled="Boolean(unavailableReason) || pending || hasStream"
+        :disabled="Boolean(unavailableReason) || pending || hasStream || disconnecting"
         @click="selectWindow"
       >{{ pending ? '等待浏览器选择…' : '选择窗口' }}</button>
       <button class="secondary" :disabled="!hasStream" @click="stopSharing()">停止共享</button>
+      <button
+        class="secondary"
+        :disabled="!hasStream || transmitting || disconnecting || Boolean(mediaStatus)"
+        @click="startTransmission"
+      >重新连接 Python</button>
+      <button
+        class="secondary"
+        :disabled="mediaStatus?.state !== 'receiving' || saving"
+        @click="saveSnapshot"
+      >{{ saving ? '正在保存…' : '保存后端截图' }}</button>
     </div>
 
     <p v-if="unavailableReason" class="error" role="alert">{{ unavailableReason }}</p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <p v-if="mediaError" class="error" role="alert">{{ mediaError }}</p>
     <p v-if="notice" class="detail" role="status">{{ notice }}</p>
 
     <div class="capture-preview">
@@ -221,6 +322,17 @@ onBeforeUnmount(() => {
       <div><dt>来源类型</dt><dd>{{ sourceType }}</dd></div>
       <div><dt>画面尺寸</dt><dd>{{ width && height ? `${width} × ${height}` : '等待画面' }}</dd></div>
     </dl>
-    <p class="detail">画面仅在当前浏览器预览，尚未发送给 Python，也未进行识别或录制。</p>
+    <div class="receiver-status" aria-live="polite">
+      <p>{{ mediaLabel }}</p>
+      <dl v-if="mediaStatus" class="capture-metadata">
+        <div><dt>接收 FPS</dt><dd>{{ mediaStatus.receive_fps.toFixed(1) }}</dd></div>
+        <div><dt>累计帧数</dt><dd>{{ mediaStatus.received_frames }}</dd></div>
+        <div><dt>后端尺寸</dt><dd>{{ mediaStatus.width }} × {{ mediaStatus.height }}</dd></div>
+        <div><dt>最新帧年龄</dt><dd>{{ mediaStatus.last_frame_age_ms ?? '—' }} ms</dd></div>
+        <div><dt>待处理帧替换</dt><dd>{{ mediaStatus.replaced_frames }}</dd></div>
+      </dl>
+    </div>
+    <p v-if="snapshotNotice" class="detail" role="status">{{ snapshotNotice }}</p>
+    <p class="detail">共享后自动通过 WebRTC 传给本地 Python；尚未进行识别或连续录制。</p>
   </section>
 </template>

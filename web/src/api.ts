@@ -1,3 +1,5 @@
+import type { MediaStatus } from './media'
+
 export interface HealthResponse {
   status: 'ok'
   version: string
@@ -15,6 +17,7 @@ export interface StatusResponse {
     }
   }
   web_ui_ready: boolean
+  media: MediaStatus
 }
 
 export async function getJson<T>(path: string, signal: AbortSignal): Promise<T> {
@@ -24,3 +27,4 @@ export async function getJson<T>(path: string, signal: AbortSignal): Promise<T> 
   }
   return response.json() as Promise<T>
 }
+
