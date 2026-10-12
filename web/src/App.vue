@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getJson } from './api'
 import type { HealthResponse, StatusResponse } from './api'
+import ScreenCapture from './components/ScreenCapture.vue'
 
 const health = ref<HealthResponse | null>(null)
 const status = ref<StatusResponse | null>(null)
@@ -59,7 +60,7 @@ onBeforeUnmount(() => {
       <div>
         <p class="eyebrow">MAPLE VISION LAB</p>
         <h1>视觉研究工作台</h1>
-        <p class="muted">本地服务状态 · P0 项目骨架</p>
+        <p class="muted">本地服务状态 · 窗口画面预览</p>
       </div>
       <button :disabled="loading" @click="refresh">
         {{ loading ? '正在检查…' : '刷新状态' }}
@@ -86,16 +87,6 @@ onBeforeUnmount(() => {
       </article>
     </section>
 
-    <section class="workspace card">
-      <div class="workspace-heading">
-        <h2>画面工作区</h2>
-        <span class="badge">待接入</span>
-      </div>
-      <div class="placeholder">
-        <p class="placeholder-title">下一步：选择窗口并预览画面</p>
-        <p class="muted">窗口共享、视频接收与识别任务将在后续接入。</p>
-      </div>
-      <p class="detail">当前页面只检查服务状态，尚未采集或传输任何画面。</p>
-    </section>
+    <ScreenCapture />
   </main>
 </template>
