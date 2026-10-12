@@ -1,0 +1,30 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Frontend
+node_modules/
+web/dist/
+*.tsbuildinfo
+
+# Local data and credentials
+.env
+.env.*
+!.env.example
+logs/
+runtime/
+*.log
+
+# Editor and OS
+.idea/
+.vscode/*
+!.vscode/launch.json
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db

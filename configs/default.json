@@ -1,0 +1,7 @@
+{
+  "host": "127.0.0.1",
+  "port": 8765,
+  "dev_frontend_port": 5173,
+  "log_level": "INFO",
+  "web_dist": "web/dist"
+}
