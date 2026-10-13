@@ -15,7 +15,7 @@ class ReceivedFrame:
     width: int
     height: int
     bgr: np.ndarray
-    source: Literal["webrtc"] = "webrtc"
+    source: Literal["webrtc", "screenshot"] = "webrtc"
 
 
 class LatestFrameBuffer:

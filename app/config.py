@@ -23,6 +23,13 @@ class Settings(BaseModel):
     media_frame_timeout_seconds: float = Field(default=8, ge=1, le=60)
     media_heartbeat_timeout_seconds: float = Field(default=10, ge=2, le=60)
     media_max_frame_pixels: StrictInt = Field(default=8_294_400, ge=1, le=33_177_600)
+    image_max_upload_bytes: StrictInt = Field(default=10_485_760, ge=1, le=52_428_800)
+    vision_profile: str = "configs/vision.json"
+
+    @property
+    def vision_profile_path(self) -> Path:
+        path = Path(self.vision_profile)
+        return path.resolve() if path.is_absolute() else (PROJECT_ROOT / path).resolve()
 
     @property
     def web_dist_path(self) -> Path:

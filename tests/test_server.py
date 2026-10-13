@@ -18,7 +18,7 @@ def test_health_status_and_lifecycle(settings):
         status = client.get("/api/status").json()
         assert status["engine"]["state"] == "idle"
         assert status["engine"]["capabilities"]["capture"] is True
-        assert status["engine"]["capabilities"]["vision"] is False
+        assert status["engine"]["capabilities"]["vision"] is True
         assert status["media"]["state"] == "idle"
         assert status["web_ui_ready"] is False
         assert client.get("/api/media/offer").status_code == 405

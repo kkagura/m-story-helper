@@ -4,7 +4,7 @@ Windows 本地视觉识别与离线自动化研究项目。浏览器负责选择
 
 ## 当前实现
 
-当前为 P0 项目骨架、窗口预览与 WebRTC 接收增量，提供：
+当前包含 P0 视频链路和离线截图识别调试增量，提供：
 
 - Python 服务入口、JSON 配置、控制台日志和共享 EngineService 生命周期。
 - `GET /api/health`、`GET /api/status` 与 `/docs`。
@@ -14,14 +14,15 @@ Windows 本地视觉识别与离线自动化研究项目。浏览器负责选择
 - 连接/首帧/无新帧/控制心跳超时清理，停止共享时关闭连接，失败后可在保留本地预览的情况下重新连接。
 - 开发时 Vite 代理 API；构建后由 FastAPI 托管 `web/dist`。
 - HTTP Host/Origin 限制和基础后端测试用例。
+- 工作台提供 PNG/JPEG 预览和识别结果；独立设置页提供参考图、血蓝区域框选/坐标编辑、试识别和保存。截图与 WebRTC 帧调用同一 EngineService 识别函数。
 
-识别、规划插件、输入控制尚未接入。API 的 capture 能力表示已提供接收功能，为 `true`，其余能力为 `false`；是否正在接收由 media 状态与累计帧数判断。共享画面会发送给同机 Python，不使用外部中继，不连续录制；仅在点击保存时下载后端截图。服务健康不等于已有视频输入。
+API 的 capture/vision 能力表示已提供接收和基础血蓝识别函数，为 true；planning/input 为 false。角色识别、自动观察任务、连续识别和决策尚未接入。是否正在接收由 media 状态与累计帧数判断。共享画面与所选截图只发送给同机 Python，不使用外部中继，不连续录制；服务健康不等于识别准确率通过。
 
 ## 开发环境与验证状态
 
 代码文件由虚拟机中的 Codex 编辑，依赖安装、构建、服务启动及 Windows 验证在宿主机执行。虚拟机与宿主机共享源码；虚拟机的工具版本和检查结果不能代表宿主机。不要在两侧同时安装或运行同一个 `.venv`/`node_modules`。
 
-用户已反馈宿主机项目运行、首页与窗口共享可用。WebRTC 接收是本次新增，Codex 仅做文件级检查；媒体依赖安装、后端测试、TypeScript、生产构建和浏览器到 Python 的效果仍待宿主机验证。以下步骤以 Windows PowerShell 为例，在宿主机项目根目录执行。
+用户已确认宿主机首页、窗口共享和后端截图正确，浏览器到 Python 的基础接收已有实测依据；持续运行、断线清理、性能基线与具体测试结果仍待补齐。本次离线识别增量仅完成代码与静态检查，上传/框选/保存及真实比例误差待宿主机验证。以下命令以 Windows PowerShell 为例，在宿主机项目根目录执行。
 
 建议 Python 3.12；当前包要求 Python ≥3.12。前端采用 Vite 7，需要 Node.js 20.19+（20.x）或 22.12+，与 [Vite 文档](https://vite.dev/guide/) 的运行要求相符；使用宿主机已有的 pnpm。具体 Python/pnpm 版本以你提供的宿主机结果为准。
 
@@ -85,7 +86,7 @@ pnpm --dir web install
 pnpm --dir web dev
 ```
 
-打开 `http://127.0.0.1:5173`。页面使用相对 `/api` 路径，Vite 转发到本地后端；视频则通过 WebRTC 直接到达 Python。顶部状态在首次加载/刷新时请求，媒体连接建立后约每秒发送控制心跳并获取接收指标。
+打开 `http://127.0.0.1:5173`。页面使用相对 `/api` 路径，Vite 转发到本地后端；视频则通过 WebRTC 直接到达 Python。工作台状态在首次加载/刷新时请求，媒体连接建立后约每秒发送控制心跳并获取接收指标。
 
 若修改后端端口，可复制 `web/.env.example` 为 `web/.env.local`，修改 `MAPLE_BACKEND_URL` 后重启 Vite。若修改前端端口，同步 `vite.config.ts` 和后端配置的 `dev_frontend_port`；固定端口被占用时先解决占用，不自动跳到另一端口。
 
@@ -126,13 +127,41 @@ pnpm --dir web typecheck
 
 tests/test_media.py 包含本地合成视频协商、截图与超时检查；通过它仍不能替代真实浏览器/Windows 捕获验收。实现依据参考 [aiortc API](https://aiortc.readthedocs.io/en/latest/api.html) 和 [PyAV 视频接口](https://pyav.org/docs/stable/api/video.html)。
 
+### 离线截图与血蓝调试
+
+没有游戏应用时，先在左侧菜单“设置”配置区域，再回“工作台 → 离线截图”选择 `samples/normal.png` 并识别。页面地址分别为 `/#settings` 和 `/#workspace`，支持直接打开、刷新及浏览器前进/后退。采用 hash 导航，不需要新依赖或服务端路由回退；Vite 会更新前端。切换页面会清理当前图片或共享流，返回后需重新选择画面。
+
+1. 上传 PNG/JPEG，服务端限制 10 MiB 和 8,294,400 像素，处理 EXIF 方向并提供与识别相同像素的 PNG 预览。全局只保留一张截图，下一张替换旧图；旧 ID 不再有效，不将上传图片写入 samples。
+2. 默认配置 [configs/vision.json](configs/vision.json) 以 normal.png 的 1382 × 807 为参考。预置区域由截图外观估计，**是待校准的开发起点，不是已验收配置**。
+3. 在“设置”上传参考图，选择血条、蓝条或经验条，拖拽框选色条的完整内部长度，包括尚未填充的尾部，避开文字和边框；也可编辑 x/y/width/height。SVG 使用源图坐标。
+4. 设置页中尺寸不同可“使用当前尺寸并清空区域”后重选；工作台遇到不匹配时只提示前往设置，不修改配置或缩放旧区域。
+5. 设置页“试识别”可检查当前草稿；工作台“识别血蓝”使用已保存配置。结果显示比例、未知原因、连续性评分、帧编号和配置哈希；评分不是准确率。
+6. 在设置页“保存区域配置”，服务端原子更新 configs/vision.json，并清除未保存提示。返回工作台后重新选择截图即可使用。未保存更改仅在设置页试用，离开后丢弃；手工修改 JSON 后需重启后端。
+7. normal.png 中可见 HP 2534/3711（约 68.3%）、MP 48/513（约 9.4%），可用来人工核对；算法不读取这些数字，实际输出需由宿主机验证。只有一张截图不足以形成独立准确率报告。
+
+经验条预填区域为 `(818, 780, 164, 12)`（x/y/width/height），按样本外观估计，可在设置页调整。当前仅显示并保存经验条区域，不计算经验比例；旧配置缺少 exp 时按未配置处理。
+
+没有有效填充颜色时 ratio 为 null，页面显示“未知”，不将空白当作零血/零蓝。当前不能可靠区分真实零值与配置错误；遮挡、颜色变化或错误 ROI 可能产生未知或不准确结果。必须用满条、半条、低值、零值/遮挡及不同录制会话扩充测试集，按方案冻结正式验收门槛，不能用单张调参图片宣布 P1 通过。
+
+本增量的工程验证用例目标是：合法图片的预览/结果属于同一 ID，区域保存与重新读取一致，非法/越界输入被拒绝，已替换图片不可继续分析；合成色条误差不超过一列像素，无有效颜色或分辨率不符返回未知。这些用例不替代正式 P1 的真实数据、FPS 与 P95 门槛。
+
+接口：POST /api/images（原始图片字节）、GET /api/images/{id}/preview、DELETE /api/images/{id}、GET/PUT /api/vision/profile、POST /api/images/{id}/analyze。POST /api/media/{id}/analyze 也接受相同 profile，使用已解码新鲜视频帧，分析后再次检查会话/尺寸/时效；当前共享页面还未加入自动识别循环。
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m ruff check app main.py tests
+pnpm --dir web typecheck
+```
+
+请反馈上传、拖拽/坐标调整、保存重载及 normal.png 的实际比例结果。测试中新加入的合成图和 HTTP 用例见 [tests/test_vision.py](tests/test_vision.py)；在虚拟机未运行这些测试。
+
 ## 5. 构建并由后端托管
 
 ```powershell
 pnpm --dir web build
 ```
 
-构建包含 TypeScript 类型检查，产物写入 `web/dist`。停止并重新启动后端，再打开 `http://127.0.0.1:8765`。后端启动时决定是否挂载静态资源，构建后必须重启；部署无需运行 Vite。当前是单页面入口，未接入前端路由。
+构建包含 TypeScript 类型检查，产物写入 web/dist。重启后端，再打开 http://127.0.0.1:8765。工作台/设置使用单入口 hash 导航，刷新 /#settings 仍请求根页面，无需服务端路径回退。
 
 ## 6. 宿主机检查与反馈
 
@@ -150,11 +179,13 @@ Invoke-RestMethod http://127.0.0.1:8765/api/health | ConvertTo-Json
 Invoke-RestMethod http://127.0.0.1:8765/api/status | ConvertTo-Json -Depth 5
 ```
 
-预期健康状态为 `ok`，引擎为 `idle`（尚未运行识别任务），capture 能力为 `true`，其他能力为 `false`；无视频时 media 为 idle，连接后为 receiving，关闭后为 closed/error。构建并重启后 web_ui_ready 为 true。后端未启动时应显示连接失败。
+预期健康状态为 ok，引擎为 idle（无自动任务），capture/vision 为 true，planning/input 为 false；无视频时 media 为 idle，连接后为 receiving，关闭后为 closed/error。构建并重启后 web_ui_ready 为 true。后端未启动时应显示连接失败。
 
 请反馈环境版本、安装/检查命令结果、两个接口 JSON 和页面连接状态。失败时提供完整错误输出；无需提供凭据或整个依赖目录。只有宿主机验证通过后，才将对应运行验收条目标记完成。
 
 ## 目录
+
+游戏截图保存在 `samples/`，用于没有游戏应用时的离线识别开发与调试；页面选择文件后上传到本地服务，不需要游戏窗口。
 
 ```text
 app/
@@ -164,12 +195,18 @@ app/
   api/server.py       HTTP 接口与静态资源托管
   media/service.py    单会话协商、接收、心跳与超时清理
   media/frames.py     不可变帧元数据及最新帧缓存
+  capture/images.py   截图解码与标准化预览
+  vision/             血蓝识别、配置与结构化结果
+  state/observation.py 同帧图像和结果快照
 configs/default.json  默认本地配置
 web/                  Vue3/Vite/TypeScript 状态页面
   src/components/ScreenCapture.vue  浏览器本地共享与生命周期管理
   src/media.ts        WebRTC 发送、心跳及截图下载
+  src/components/ScreenshotLab.vue  离线预览、区域编辑与结果
+  src/pages/SettingsPage.vue         独立区域设置页面
 tests/test_server.py  API、生命周期、托管与访问限制检查
 tests/test_media.py   合成视频协商、截图、缓存与故障检查
+tests/test_vision.py  合成色条、上传、分析及配置保存检查
 main.py               源码启动入口
 ```
 

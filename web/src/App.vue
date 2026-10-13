@@ -3,11 +3,15 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getJson } from './api'
 import type { HealthResponse, StatusResponse } from './api'
 import ScreenCapture from './components/ScreenCapture.vue'
+import ScreenshotLab from './components/ScreenshotLab.vue'
+import SettingsPage from './pages/SettingsPage.vue'
 
 const health = ref<HealthResponse | null>(null)
 const status = ref<StatusResponse | null>(null)
 const loading = ref(false)
 const error = ref('')
+const inputMode = ref<'screenshot' | 'live'>('screenshot')
+const page = ref<'workspace' | 'settings'>(window.location.hash === '#settings' ? 'settings' : 'workspace')
 let controller: AbortController | null = null
 let disposed = false
 
@@ -47,46 +51,77 @@ async function refresh() {
   }
 }
 
-onMounted(refresh)
+function updatePage() {
+  page.value = window.location.hash === '#settings' ? 'settings' : 'workspace'
+}
+
+onMounted(() => {
+  window.addEventListener('hashchange', updatePage)
+  void refresh()
+})
 onBeforeUnmount(() => {
+  window.removeEventListener('hashchange', updatePage)
   disposed = true
   controller?.abort()
 })
 </script>
 
 <template>
-  <main class="shell">
-    <header class="header">
-      <div>
-        <p class="eyebrow">MAPLE VISION LAB</p>
-        <h1>视觉研究工作台</h1>
-        <p class="muted">本地服务状态 · 窗口画面预览</p>
-      </div>
-      <button :disabled="loading" @click="refresh">
-        {{ loading ? '正在检查…' : '刷新状态' }}
-      </button>
+  <div class="app-shell">
+    <header class="app-header">
+      <p class="eyebrow">MAPLE VISION LAB</p>
+      <h1>视觉研究工作台</h1>
     </header>
 
-    <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <div class="app-content">
+      <aside class="sidebar">
+        <nav class="page-navigation" aria-label="主导航">
+          <a href="#workspace" :aria-current="page === 'workspace' ? 'page' : undefined">工作台</a>
+          <a href="#settings" :aria-current="page === 'settings' ? 'page' : undefined">设置</a>
+        </nav>
+      </aside>
 
-    <section class="stats" aria-label="本地服务状态" aria-live="polite">
-      <article class="card">
-        <p class="muted">服务连接</p>
-        <h2>{{ connectionLabel }}</h2>
-        <p class="detail">{{ health ? `版本 ${health.version}` : '等待本地服务响应' }}</p>
-      </article>
-      <article class="card">
-        <p class="muted">引擎状态</p>
-        <h2>{{ status ? (status.engine.state === 'idle' ? '空闲' : '已停止') : '—' }}</h2>
-        <p class="detail">{{ status ? `服务运行 ${Math.floor(status.engine.uptime_seconds)} 秒` : '尚无状态数据' }}</p>
-      </article>
-      <article class="card">
-        <p class="muted">前端构建</p>
-        <h2>{{ status ? (status.web_ui_ready ? '已就绪' : '未构建') : '—' }}</h2>
-        <p class="detail">开发页面通过 Vite 访问服务</p>
-      </article>
-    </section>
+      <main class="page-content">
+        <header class="page-heading">
+          <div>
+            <h2>{{ page === 'settings' ? '设置' : '工作台' }}</h2>
+            <p class="muted">{{ page === 'settings' ? '识别区域与参考画面配置' : '本地服务状态 · 截图调试与窗口预览' }}</p>
+          </div>
+          <button v-if="page === 'workspace'" :disabled="loading" @click="refresh">
+            {{ loading ? '正在检查…' : '刷新状态' }}
+          </button>
+        </header>
 
-    <ScreenCapture />
-  </main>
+        <SettingsPage v-if="page === 'settings'" />
+        <template v-else>
+          <p v-if="error" class="error" role="alert">{{ error }}</p>
+
+          <section class="stats" aria-label="本地服务状态" aria-live="polite">
+            <article class="card">
+              <p class="muted">服务连接</p>
+              <h2>{{ connectionLabel }}</h2>
+              <p class="detail">{{ health ? `版本 ${health.version}` : '等待本地服务响应' }}</p>
+            </article>
+            <article class="card">
+              <p class="muted">引擎状态</p>
+              <h2>{{ status ? (status.engine.state === 'idle' ? '空闲' : '已停止') : '—' }}</h2>
+              <p class="detail">{{ status ? `服务运行 ${Math.floor(status.engine.uptime_seconds)} 秒` : '尚无状态数据' }}</p>
+            </article>
+            <article class="card">
+              <p class="muted">前端构建</p>
+              <h2>{{ status ? (status.web_ui_ready ? '已就绪' : '未构建') : '—' }}</h2>
+              <p class="detail">开发页面通过 Vite 访问服务</p>
+            </article>
+          </section>
+
+          <nav class="input-tabs" aria-label="画面来源">
+            <button :aria-pressed="inputMode === 'screenshot'" @click="inputMode = 'screenshot'">离线截图</button>
+            <button :aria-pressed="inputMode === 'live'" @click="inputMode = 'live'">窗口共享</button>
+          </nav>
+          <ScreenshotLab v-if="inputMode === 'screenshot'" />
+          <ScreenCapture v-else />
+        </template>
+      </main>
+    </div>
+  </div>
 </template>

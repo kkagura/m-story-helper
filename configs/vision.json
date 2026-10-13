@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "reference_size": [
+    1382,
+    807
+  ],
+  "hp": {
+    "x": 474,
+    "y": 780,
+    "width": 164,
+    "height": 12
+  },
+  "mp": {
+    "x": 642,
+    "y": 780,
+    "width": 164,
+    "height": 12
+  },
+  "min_channel": 80,
+  "min_color_difference": 35,
+  "min_column_fraction": 0.3,
+  "min_continuity": 0.9,
+  "exp": {
+    "x": 818,
+    "y": 780,
+    "width": 164,
+    "height": 12
+  }
+}

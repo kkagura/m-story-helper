@@ -1,10 +1,20 @@
 """Shared service lifecycle and implemented capabilities, separate from active sessions."""
 
+import asyncio
+import json
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Literal
+from uuid import uuid4
 
 from pydantic import BaseModel
+
+from app.media.frames import ReceivedFrame
+from app.state.observation import ObservationSnapshot
+from app.vision.bars import read_bar
+from app.vision.models import ObservationResult, VisionFailure, VisionProfile
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +33,91 @@ class EngineStatus(BaseModel):
 
 
 class EngineService:
-    def __init__(self, *, capture_available: bool = False) -> None:
+    def __init__(
+        self, *, capture_available: bool = False, profile_path: Path | None = None
+    ) -> None:
         self._started_at: float | None = None
         self._capture_available = capture_available
+        self._profile_path = profile_path
+        self._profile = (
+            VisionProfile.model_validate_json(profile_path.read_text(encoding="utf-8"))
+            if profile_path and profile_path.is_file()
+            else VisionProfile(reference_size=(1, 1))
+        )
+        self._analysis_task: asyncio.Task | None = None
+        self._profile_lock = asyncio.Lock()
+
+    @property
+    def profile(self) -> VisionProfile:
+        return self._profile
+
+    async def save_profile(self, profile: VisionProfile) -> None:
+        if self._profile_path is None:
+            raise VisionFailure(409, "未配置区域保存路径。")
+        async with self._profile_lock:
+            path = self._profile_path
+
+            def write():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = path.with_name(f".{path.name}.{uuid4()}.tmp")
+                try:
+                    temporary.write_text(
+                        json.dumps(profile.model_dump(), indent=2, ensure_ascii=False) + "\n",
+                        encoding="utf-8",
+                    )
+                    os.replace(temporary, path)
+                finally:
+                    temporary.unlink(missing_ok=True)
+
+            async def persist():
+                try:
+                    await asyncio.to_thread(write)
+                except OSError as exc:
+                    raise VisionFailure(500, "保存区域配置失败，请检查文件写入权限。") from exc
+                self._profile = profile
+
+            task = asyncio.create_task(persist())
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task
+                raise
+
+    async def analyze(
+        self, frame: ReceivedFrame, profile: VisionProfile | None = None
+    ) -> ObservationSnapshot:
+        if self._analysis_task is not None and not self._analysis_task.done():
+            raise VisionFailure(429, "已有识别正在进行，请稍后重试。")
+        selected = profile if profile is not None else self.profile
+
+        def run():
+            start = time.monotonic()
+            hp = read_bar(frame.bgr, selected.hp, "hp", selected)
+            mp = read_bar(frame.bgr, selected.mp, "mp", selected)
+            result = ObservationResult(
+                observation_id=f"{frame.session_id}:{frame.frame_id}:{selected.version}",
+                session_id=frame.session_id, frame_id=frame.frame_id,
+                size_version=frame.size_version, source=frame.source,
+                source_size=(frame.width, frame.height), profile_version=selected.version,
+                processing_ms=round((time.monotonic() - start) * 1000, 3), hp=hp, mp=mp,
+            )
+            return ObservationSnapshot(frame=frame, result=result)
+
+        task = asyncio.create_task(asyncio.to_thread(run))
+        self._analysis_task = task
+
+        def finished(completed):
+            if self._analysis_task is completed:
+                self._analysis_task = None
+            if not completed.cancelled():
+                completed.exception()
+
+        task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def close_jobs(self) -> None:
+        if self._analysis_task is not None:
+            await asyncio.gather(self._analysis_task, return_exceptions=True)
 
     def start(self) -> None:
         if self._started_at is None:
@@ -43,5 +135,7 @@ class EngineService:
             uptime_seconds=(
                 round(time.monotonic() - started_at, 3) if started_at is not None else 0.0
             ),
-            capabilities=Capabilities(capture=self._capture_available),
+            capabilities=Capabilities(
+                capture=self._capture_available, vision=self._profile_path is not None
+            ),
         )

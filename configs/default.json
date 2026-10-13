@@ -8,5 +8,7 @@
   "media_connect_timeout_seconds": 15,
   "media_frame_timeout_seconds": 8,
   "media_heartbeat_timeout_seconds": 10,
-  "media_max_frame_pixels": 8294400
+  "media_max_frame_pixels": 8294400,
+  "image_max_upload_bytes": 10485760,
+  "vision_profile": "configs/vision.json"
 }

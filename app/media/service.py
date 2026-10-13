@@ -253,6 +253,22 @@ class MediaService:
         session.last_control_at = time.monotonic()
         return session.status()
 
+    def analysis_frame(self, session_id: str) -> ReceivedFrame:
+        session = self._require_session(session_id)
+        frame = session.buffer.peek()
+        if frame is None:
+            raise MediaFailure(409, "尚未收到画面。")
+        self.validate_analysis_frame(frame)
+        return frame
+
+    def validate_analysis_frame(self, frame: ReceivedFrame) -> None:
+        session = self._require_session(frame.session_id)
+        if session.size_version != frame.size_version:
+            raise MediaFailure(409, "画面尺寸已经变化。")
+        age = time.monotonic() - frame.received_at_monotonic
+        if age > self.settings.media_frame_timeout_seconds:
+            raise MediaFailure(409, "用于识别的画面已经过期。")
+
     async def close(self, session_id: str) -> None:
         session = self._session
         if session is not None and session.id == session_id:
