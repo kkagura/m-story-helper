@@ -69,6 +69,8 @@ legend { padding: 0 6px; font-size: 13px; color: #b7c6d7; }
 .roi-hp { stroke: #ff7373; }
 .roi-mp { stroke: #70ccff; }
 .roi-exp { stroke: #ffe66d; }
+.roi-player_info { stroke: #bd9cff; }
+.roi-player_name { stroke: #80e6bd; }
 .roi-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px; margin-top: 16px; }
 .roi-fields label { display: inline-flex; flex-direction: column; gap: 6px; margin: 6px 10px 10px 0; color: #a5afbf; font-size: 12px; }
 .roi-fields input { width: 82px; padding: 8px; background: #10151e; border: 1px solid #48566b; border-radius: 4px; color: #e8edf5; font: inherit; }

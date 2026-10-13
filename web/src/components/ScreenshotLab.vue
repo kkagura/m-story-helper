@@ -6,11 +6,17 @@ import type { BarReading, ImportedImage, ObservationResult, Rect, VisionProfile 
 const props = withDefaults(defineProps<{ mode?: 'analyze' | 'configure' }>(), { mode: 'analyze' })
 const configuring = computed(() => props.mode === 'configure')
 const savedProfile = ref('')
+const regions = ['hp', 'mp', 'exp', 'player_info', 'player_name'] as const
+type RegionKind = typeof regions[number]
+const regionLabels: Record<RegionKind, string> = {
+  hp: '血条（红框）', mp: '蓝条（蓝框）', exp: '经验条（黄框）',
+  player_info: '角色信息栏（紫框）', player_name: '角色名称（绿框）',
+}
 
 const image = ref<ImportedImage | null>(null)
 const profile = ref<VisionProfile | null>(null)
 const result = ref<ObservationResult | null>(null)
-const target = ref<'hp' | 'mp' | 'exp'>('hp')
+const target = ref<RegionKind>('hp')
 const editor = ref<SVGSVGElement | null>(null)
 const busy = ref(false)
 const ready = ref(false)
@@ -18,7 +24,7 @@ const error = ref('')
 const notice = ref('')
 let controller: AbortController | null = null
 let disposed = false
-let drag: { x: number; y: number; pointerId: number; target: 'hp' | 'mp' | 'exp' } | null = null
+let drag: { x: number; y: number; pointerId: number; target: RegionKind } | null = null
 
 const mismatch = computed(() => image.value && profile.value && (
   image.value.width !== profile.value.reference_size[0]
@@ -62,14 +68,14 @@ async function upload(event: Event) {
     ready.value = false
     result.value = null
     notice.value = configuring.value
-      ? '拖拽框选血条/蓝条/经验条完整内部长度，避开边框和文字。'
+      ? '请选择目标并拖拽框选；色条包含完整内部长度，角色名称仅框住姓名一行。'
       : '截图已导入，点击“识别血蓝”使用已保存的区域配置。'
   })
 }
 
 function adoptSize() {
   if (!configuring.value || !image.value || !profile.value) return
-  profile.value = { ...profile.value, reference_size: [image.value.width, image.value.height], hp: null, mp: null, exp: null }
+  profile.value = { ...profile.value, reference_size: [image.value.width, image.value.height], hp: null, mp: null, exp: null, player_info: null, player_name: null }
 }
 
 function point(event: PointerEvent) {
@@ -106,7 +112,7 @@ function endDrag(event: PointerEvent) {
   if (editor.value?.hasPointerCapture(event.pointerId)) editor.value.releasePointerCapture(event.pointerId)
 }
 
-function editField(kind: 'hp' | 'mp' | 'exp', field: keyof Rect, event: Event) {
+function editField(kind: RegionKind, field: keyof Rect, event: Event) {
   const region = profile.value?.[kind]
   if (!configuring.value || !region || busy.value) return
   const value = (event.target as HTMLInputElement).valueAsNumber
@@ -187,7 +193,7 @@ onBeforeUnmount(() => {
 <template>
   <section class="card screenshot-lab" aria-labelledby="screenshot-heading">
     <div class="workspace-heading">
-      <h2 id="screenshot-heading">{{ configuring ? '色条区域配置' : '离线截图调试' }}</h2>
+      <h2 id="screenshot-heading">{{ configuring ? '识别区域配置' : '离线截图调试' }}</h2>
       <span class="badge">{{ configuring ? (profile ? (dirty ? '有未保存更改' : '已保存配置') : '配置未加载') : '本地识别' }}</span>
     </div>
     <p class="detail">{{ configuring ? '选择参考截图，在画面上框选区域并保存；未保存更改仅用于此页试识别。' : '选择 samples 中的 PNG/JPEG，使用设置页保存的区域识别。' }}</p>
@@ -208,16 +214,14 @@ onBeforeUnmount(() => {
     <div v-if="image && profile" class="roi-editor">
       <fieldset v-if="configuring" :disabled="busy || Boolean(mismatch)">
         <legend>框选目标（也可在下方输入像素坐标）</legend>
-        <label><input v-model="target" type="radio" value="hp" /> 血条</label>
-        <label><input v-model="target" type="radio" value="mp" /> 蓝条</label>
-        <label><input v-model="target" type="radio" value="exp" /> 经验条</label>
+        <label v-for="kind in regions" :key="kind"><input v-model="target" type="radio" :value="kind" /> {{ regionLabels[kind] }}</label>
       </fieldset>
       <svg :key="image.image_id" ref="editor" class="screenshot-editor" :class="{ 'read-only': !configuring }" :viewBox="`0 0 ${image.width} ${image.height}`"
-        role="img" aria-label="游戏截图与血蓝及经验条区域" @pointerdown="beginDrag" @pointermove="moveDrag"
+        role="img" aria-label="游戏截图与识别区域" @pointerdown="beginDrag" @pointermove="moveDrag"
         @pointerup="endDrag" @pointercancel="drag = null">
         <image :href="preview" :width="image.width" :height="image.height"
           @load="ready = true" @error="ready = false; error = '预览已失效，请重新上传。'" />
-        <template v-for="kind in (['hp', 'mp', 'exp'] as const)" :key="kind">
+        <template v-for="kind in regions" :key="kind">
           <rect v-if="profile[kind]" :x="profile[kind]?.x" :y="profile[kind]?.y"
             :width="profile[kind]?.width" :height="profile[kind]?.height"
             :class="`roi-box roi-${kind}`" vector-effect="non-scaling-stroke" />
@@ -225,8 +229,8 @@ onBeforeUnmount(() => {
       </svg>
       <p class="detail">源图 {{ image.width }} × {{ image.height }} · 图片编号 {{ image.image_id }}</p>
       <div v-if="configuring" class="roi-fields">
-        <fieldset v-for="kind in (['hp', 'mp', 'exp'] as const)" :key="kind" :disabled="busy || Boolean(mismatch)">
-          <legend>{{ kind === 'hp' ? '血条（红框）' : kind === 'mp' ? '蓝条（蓝框）' : '经验条（黄框）' }}</legend>
+        <fieldset v-for="kind in regions" :key="kind" :disabled="busy || Boolean(mismatch)">
+          <legend>{{ regionLabels[kind] }}</legend>
           <template v-if="profile[kind]">
             <label v-for="field in (['x', 'y', 'width', 'height'] as const)" :key="field">
               {{ field }}<input :value="profile[kind]?.[field]" type="number" step="1"
@@ -245,7 +249,7 @@ onBeforeUnmount(() => {
       </article>
       <article class="card"><p class="muted">识别记录</p><p class="detail">{{ result.processing_ms }} ms · 帧 {{ result.frame_id }}<br />配置 {{ result.profile_version }}</p></article>
     </div>
-    <p class="detail">经验条目前仅配置和展示区域，尚不计算经验比例。</p>
+    <p class="detail">经验条、角色信息栏和角色名称目前仅配置和展示区域，尚不计算经验比例或通过 OCR 读取姓名。角色信息栏框包含等级、职业与姓名，角色名称框仅包含姓名一行；两者可重叠。</p>
     <p class="detail">当前算法估算色条填充长度，不读取数字；无填充颜色时显示未知，尚不能可靠区分真实零值与错误区域。</p>
   </section>
 </template>

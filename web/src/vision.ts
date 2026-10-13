@@ -5,6 +5,8 @@ export interface VisionProfile {
   hp: Rect | null
   mp: Rect | null
   exp: Rect | null
+  player_info: Rect | null
+  player_name: Rect | null
   min_channel: number
   min_color_difference: number
   min_column_fraction: number

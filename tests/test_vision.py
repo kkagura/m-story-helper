@@ -17,12 +17,13 @@ def profile():
     return VisionProfile(reference_size=(100, 12), hp=Rect(x=0, y=0, width=100, height=12))
 
 
-def test_experience_region_optional_and_validated():
-    legacy = profile().model_dump(exclude={"exp"})
-    assert VisionProfile.model_validate(legacy).exp is None
-    legacy["exp"] = {"x": 0, "y": 0, "width": 100, "height": 12}
-    assert VisionProfile.model_validate(legacy).exp.width == 100
-    legacy["exp"]["x"] = 1
+@pytest.mark.parametrize("kind", ["exp", "player_info", "player_name"])
+def test_optional_region_compatibility_and_bounds(kind):
+    legacy = profile().model_dump(exclude={"exp", "player_info", "player_name"})
+    assert getattr(VisionProfile.model_validate(legacy), kind) is None
+    legacy[kind] = {"x": 0, "y": 0, "width": 100, "height": 12}
+    assert getattr(VisionProfile.model_validate(legacy), kind).width == 100
+    legacy[kind]["x"] = 1
     with pytest.raises(ValidationError):
         VisionProfile.model_validate(legacy)
 
@@ -66,6 +67,8 @@ def test_upload_preview_analysis_and_saved_profile(tmp_path):
         assert Image.open(io.BytesIO(preview.content)).size == (100, 12)
         body = profile().model_dump()
         body["exp"] = {"x": 0, "y": 0, "width": 100, "height": 12}
+        body["player_info"] = {"x": 0, "y": 0, "width": 100, "height": 12}
+        body["player_name"] = {"x": 1, "y": 1, "width": 50, "height": 10}
         result = client.post(f"/api/images/{image_id}/analyze", json=body).json()
         assert result["hp"]["ratio"] == pytest.approx(0.5)
         assert result["mp"]["ratio"] is None
@@ -76,6 +79,9 @@ def test_upload_preview_analysis_and_saved_profile(tmp_path):
         assert client.get("/api/vision/profile").json()["hp"]["width"] == 100
         assert client.get("/api/vision/profile").json()["exp"] == body["exp"]
         assert json.loads(path.read_text())["exp"] == body["exp"]
+        for kind in ("player_info", "player_name"):
+            assert client.get("/api/vision/profile").json()[kind] == body[kind]
+            assert json.loads(path.read_text())[kind] == body[kind]
         replacement = client.post("/api/images", content=payload.getvalue()).json()["image_id"]
         assert replacement != image_id
         assert client.get(f"/api/images/{image_id}/preview").status_code == 404

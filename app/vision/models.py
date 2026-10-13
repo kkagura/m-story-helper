@@ -27,6 +27,8 @@ class VisionProfile(BaseModel):
     hp: Rect | None = None
     mp: Rect | None = None
     exp: Rect | None = None
+    player_info: Rect | None = None
+    player_name: Rect | None = None
     min_channel: StrictInt = Field(default=80, ge=1, le=255)
     min_color_difference: StrictInt = Field(default=35, ge=1, le=255)
     min_column_fraction: float = Field(default=0.3, gt=0, le=1)
@@ -37,7 +39,7 @@ class VisionProfile(BaseModel):
         width, height = self.reference_size
         if not (1 <= width <= 16384 and 1 <= height <= 16384):
             raise ValueError("参考尺寸必须为 1–16384 的整数")
-        for roi in (self.hp, self.mp, self.exp):
+        for roi in (self.hp, self.mp, self.exp, self.player_info, self.player_name):
             if roi and (roi.x + roi.width > width or roi.y + roi.height > height):
                 raise ValueError("识别区域超出参考画面")
         return self

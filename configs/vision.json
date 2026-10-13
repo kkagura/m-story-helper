@@ -25,5 +25,17 @@
     "y": 780,
     "width": 164,
     "height": 12
+  },
+  "player_info": {
+    "x": 14,
+    "y": 763,
+    "width": 444,
+    "height": 34
+  },
+  "player_name": {
+    "x": 114,
+    "y": 778,
+    "width": 340,
+    "height": 17
   }
 }
