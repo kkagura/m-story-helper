@@ -15,6 +15,7 @@ dependencies = [
     "aiortc>=1.14,<2",
     "numpy>=2,<3",
     "pillow>=11,<13",
+    "rapidocr-onnxruntime==1.4.4",
 ]
 
 [project.optional-dependencies]

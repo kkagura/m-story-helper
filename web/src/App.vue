@@ -3,15 +3,28 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { getJson } from './api'
 import type { HealthResponse, StatusResponse } from './api'
 import ScreenCapture from './components/ScreenCapture.vue'
-import ScreenshotLab from './components/ScreenshotLab.vue'
+import RecognitionTestPage from './pages/RecognitionTestPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 
 const health = ref<HealthResponse | null>(null)
 const status = ref<StatusResponse | null>(null)
 const loading = ref(false)
 const error = ref('')
-const inputMode = ref<'screenshot' | 'live'>('screenshot')
-const page = ref<'workspace' | 'settings'>(window.location.hash === '#settings' ? 'settings' : 'workspace')
+type Page = 'workspace' | 'recognition' | 'settings'
+function currentPage(): Page {
+  if (window.location.hash === '#settings') return 'settings'
+  if (window.location.hash === '#recognition') return 'recognition'
+  return 'workspace'
+}
+const page = ref<Page>(currentPage())
+const pageTitles: Record<Page, string> = {
+  workspace: '工作台', recognition: '识别测试', settings: '设置',
+}
+const pageDescriptions: Record<Page, string> = {
+  workspace: '本地服务状态 · 窗口共享与预览',
+  recognition: '离线截图 · 血蓝比例与角色名称识别',
+  settings: '识别区域与参考画面配置',
+}
 let controller: AbortController | null = null
 let disposed = false
 
@@ -52,7 +65,7 @@ async function refresh() {
 }
 
 function updatePage() {
-  page.value = window.location.hash === '#settings' ? 'settings' : 'workspace'
+  page.value = currentPage()
 }
 
 onMounted(() => {
@@ -77,6 +90,7 @@ onBeforeUnmount(() => {
       <aside class="sidebar">
         <nav class="page-navigation" aria-label="主导航">
           <a href="#workspace" :aria-current="page === 'workspace' ? 'page' : undefined">工作台</a>
+          <a href="#recognition" :aria-current="page === 'recognition' ? 'page' : undefined">识别测试</a>
           <a href="#settings" :aria-current="page === 'settings' ? 'page' : undefined">设置</a>
         </nav>
       </aside>
@@ -84,8 +98,8 @@ onBeforeUnmount(() => {
       <main class="page-content">
         <header class="page-heading">
           <div>
-            <h2>{{ page === 'settings' ? '设置' : '工作台' }}</h2>
-            <p class="muted">{{ page === 'settings' ? '识别区域与参考画面配置' : '本地服务状态 · 截图调试与窗口预览' }}</p>
+            <h2>{{ pageTitles[page] }}</h2>
+            <p v-if="page !== 'recognition'" class="muted">{{ pageDescriptions[page] }}</p>
           </div>
           <button v-if="page === 'workspace'" :disabled="loading" @click="refresh">
             {{ loading ? '正在检查…' : '刷新状态' }}
@@ -93,6 +107,7 @@ onBeforeUnmount(() => {
         </header>
 
         <SettingsPage v-if="page === 'settings'" />
+        <RecognitionTestPage v-else-if="page === 'recognition'" />
         <template v-else>
           <p v-if="error" class="error" role="alert">{{ error }}</p>
 
@@ -114,12 +129,7 @@ onBeforeUnmount(() => {
             </article>
           </section>
 
-          <nav class="input-tabs" aria-label="画面来源">
-            <button :aria-pressed="inputMode === 'screenshot'" @click="inputMode = 'screenshot'">离线截图</button>
-            <button :aria-pressed="inputMode === 'live'" @click="inputMode = 'live'">窗口共享</button>
-          </nav>
-          <ScreenshotLab v-if="inputMode === 'screenshot'" />
-          <ScreenCapture v-else />
+          <ScreenCapture />
         </template>
       </main>
     </div>

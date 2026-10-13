@@ -1,7 +1,6 @@
 import io
 import json
 
-import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -9,17 +8,23 @@ from pydantic import ValidationError
 
 from app.api.server import create_app
 from app.config import Settings
-from app.vision.bars import read_bar
 from app.vision.models import Rect, VisionProfile
+from app.vision.names import PlayerNameReader
 
 
 def profile():
-    return VisionProfile(reference_size=(100, 12), hp=Rect(x=0, y=0, width=100, height=12))
+    return VisionProfile(reference_size=(100, 12), hp_text=Rect(x=0, y=0, width=100, height=12))
 
 
-@pytest.mark.parametrize("kind", ["exp", "player_info", "player_name"])
+@pytest.mark.parametrize(
+    "kind", [ "player_info", "player_name", "hp_text", "mp_text",
+             "player_level", "player_job", "exp_text"],
+)
 def test_optional_region_compatibility_and_bounds(kind):
-    legacy = profile().model_dump(exclude={"exp", "player_info", "player_name"})
+    legacy = profile().model_dump(
+        exclude={ "player_info", "player_name", "hp_text", "mp_text",
+                 "player_level", "player_job", "exp_text"},
+    )
     assert getattr(VisionProfile.model_validate(legacy), kind) is None
     legacy[kind] = {"x": 0, "y": 0, "width": 100, "height": 12}
     assert getattr(VisionProfile.model_validate(legacy), kind).width == 100
@@ -28,35 +33,22 @@ def test_optional_region_compatibility_and_bounds(kind):
         VisionProfile.model_validate(legacy)
 
 
-@pytest.mark.parametrize("fraction", [0.1, 0.5, 1.0])
-@pytest.mark.parametrize("kind", ["hp", "mp"])
-def test_bar_fill_ratio(fraction, kind):
-    image = np.full((12, 100, 3), 64, dtype=np.uint8)
-    image[:, :int(fraction * 100)] = (0, 0, 200) if kind == "hp" else (200, 150, 0)
-    selected = profile()
-    reading = read_bar(image, selected.hp, kind, selected)
-    assert reading.ratio == pytest.approx(fraction, abs=0.01)
-    assert reading.status == "known"
+@pytest.mark.parametrize("field", ["hp", "mp", "exp", "min_channel", "unexpected"])
+def test_unknown_profile_fields_are_rejected(field):
+    with pytest.raises(ValidationError):
+        VisionProfile.model_validate({**profile().model_dump(), field: None})
 
 
-def test_unknown_is_not_zero_and_scattered_color_is_rejected():
-    image = np.full((12, 100, 3), 64, dtype=np.uint8)
-    selected = profile()
-    assert read_bar(image, selected.hp, "hp", selected).ratio is None
-    image[:, :50] = (0, 0, 200)
-    image[:, 95] = (0, 0, 200)
-    assert read_bar(image, selected.hp, "hp", selected).reason == "fill_not_contiguous"
-    wrong_size = image[:, :80]
-    assert read_bar(wrong_size, selected.hp, "hp", selected).ratio is None
+def test_upload_preview_analysis_and_saved_profile(tmp_path, monkeypatch):
+    texts = iter(["测试角色", "25/100", "0/50", "55", "剑客", "503851[54.37%]"])
 
+    def fake_ocr(_pixels, **_options):
+        return [[[], next(texts), 0.95]], [0.01]
 
-def test_upload_preview_analysis_and_saved_profile(tmp_path):
+    monkeypatch.setattr(PlayerNameReader, "_create_engine", lambda _: fake_ocr)
     path = tmp_path / "vision.json"
     settings = Settings(vision_profile=str(path), web_dist=str(tmp_path / "dist"))
     image = Image.new("RGB", (100, 12), (64, 64, 64))
-    for x in range(50):
-        for y in range(12):
-            image.putpixel((x, y), (200, 0, 0))
     payload = io.BytesIO()
     image.save(payload, format="PNG")
     with TestClient(create_app(settings), base_url="http://127.0.0.1:8765") as client:
@@ -66,20 +58,39 @@ def test_upload_preview_analysis_and_saved_profile(tmp_path):
         preview = client.get(f"/api/images/{image_id}/preview")
         assert Image.open(io.BytesIO(preview.content)).size == (100, 12)
         body = profile().model_dump()
-        body["exp"] = {"x": 0, "y": 0, "width": 100, "height": 12}
+        body["player_level_min_confidence"] = 0.65
         body["player_info"] = {"x": 0, "y": 0, "width": 100, "height": 12}
         body["player_name"] = {"x": 1, "y": 1, "width": 50, "height": 10}
+        body["hp_text"] = {"x": 0, "y": 0, "width": 40, "height": 12}
+        body["mp_text"] = {"x": 50, "y": 0, "width": 40, "height": 12}
+        for kind in ("player_level", "player_job", "exp_text"):
+            body[kind] = {"x": 0, "y": 0, "width": 40, "height": 12}
         result = client.post(f"/api/images/{image_id}/analyze", json=body).json()
-        assert result["hp"]["ratio"] == pytest.approx(0.5)
-        assert result["mp"]["ratio"] is None
+        assert "hp" not in result and "mp" not in result
         assert result["session_id"] == image_id
         assert result["source"] == "screenshot"
+        assert result["player_name"]["text"] == "测试角色"
+        assert result["player_name"]["bbox"] == [1, 1, 50, 10]
+        assert result["hp_numbers"]["current"] == 25
+        assert result["hp_numbers"]["total"] == 100
+        assert result["hp_numbers"]["ratio"] == 0.25
+        assert result["mp_numbers"]["current"] == 0
+        assert result["mp_numbers"]["total"] == 50
+        assert result["mp_numbers"]["ratio"] == 0
+        assert result["player_level"]["value"] == 55
+        assert result["player_job"]["text"] == "剑客"
+        assert result["experience"]["value"] == 503851
+        assert result["experience"]["percentage"] == 54.37
         assert client.put("/api/vision/profile", json=body).status_code == 200
+        assert client.get("/api/vision/profile").json()["player_level_min_confidence"] == 0.65
+        assert json.loads(path.read_text())["player_level_min_confidence"] == 0.65
         assert json.loads(path.read_text())["reference_size"] == [100, 12]
-        assert client.get("/api/vision/profile").json()["hp"]["width"] == 100
-        assert client.get("/api/vision/profile").json()["exp"] == body["exp"]
-        assert json.loads(path.read_text())["exp"] == body["exp"]
-        for kind in ("player_info", "player_name"):
+        assert "hp" not in client.get("/api/vision/profile").json()
+        assert "exp" not in json.loads(path.read_text())
+        assert "min_channel" not in json.loads(path.read_text())
+        assert client.put("/api/vision/profile", json={**body, "hp": None}).status_code == 422
+        for kind in ("player_info", "player_name", "hp_text", "mp_text",
+                     "player_level", "player_job", "exp_text"):
             assert client.get("/api/vision/profile").json()[kind] == body[kind]
             assert json.loads(path.read_text())[kind] == body[kind]
         replacement = client.post("/api/images", content=payload.getvalue()).json()["image_id"]
@@ -98,6 +109,6 @@ def test_invalid_image_size_and_region_are_rejected(tmp_path):
         assert client.post("/api/images", content=b"not an image").status_code == 415
         assert client.post("/api/images", content=b"x" * 101).status_code == 413
         body = profile().model_dump()
-        body["hp"]["x"] = 1
+        body["hp_text"]["x"] = 1
         assert client.put("/api/vision/profile", json=body).status_code == 422
         assert not settings.vision_profile_path.exists()

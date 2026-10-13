@@ -4,27 +4,17 @@
     1382,
     807
   ],
-  "hp": {
-    "x": 474,
-    "y": 780,
-    "width": 164,
-    "height": 12
+  "hp_text": {
+    "x": 495,
+    "y": 762,
+    "width": 142,
+    "height": 14
   },
-  "mp": {
-    "x": 642,
-    "y": 780,
-    "width": 164,
-    "height": 12
-  },
-  "min_channel": 80,
-  "min_color_difference": 35,
-  "min_column_fraction": 0.3,
-  "min_continuity": 0.9,
-  "exp": {
-    "x": 818,
-    "y": 780,
-    "width": 164,
-    "height": 12
+  "mp_text": {
+    "x": 664,
+    "y": 762,
+    "width": 141,
+    "height": 14
   },
   "player_info": {
     "x": 14,
@@ -37,5 +27,26 @@
     "y": 778,
     "width": 340,
     "height": 17
-  }
+  },
+  "player_name_min_confidence": 0.8,
+  "numbers_min_confidence": 0.8,
+  "player_level": {
+    "x": 62,
+    "y": 772,
+    "width": 28,
+    "height": 19
+  },
+  "player_job": {
+    "x": 114,
+    "y": 763,
+    "width": 140,
+    "height": 15
+  },
+  "exp_text": {
+    "x": 843,
+    "y": 762,
+    "width": 140,
+    "height": 14
+  },
+  "player_level_min_confidence": 0.6
 }

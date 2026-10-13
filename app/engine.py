@@ -13,8 +13,10 @@ from pydantic import BaseModel
 
 from app.media.frames import ReceivedFrame
 from app.state.observation import ObservationSnapshot
-from app.vision.bars import read_bar
+from app.vision.character import read_character
 from app.vision.models import ObservationResult, VisionFailure, VisionProfile
+from app.vision.names import PlayerNameReader
+from app.vision.numbers import read_values
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,7 @@ class EngineService:
         )
         self._analysis_task: asyncio.Task | None = None
         self._profile_lock = asyncio.Lock()
+        self._name_reader = PlayerNameReader()
 
     @property
     def profile(self) -> VisionProfile:
@@ -92,14 +95,21 @@ class EngineService:
 
         def run():
             start = time.monotonic()
-            hp = read_bar(frame.bgr, selected.hp, "hp", selected)
-            mp = read_bar(frame.bgr, selected.mp, "mp", selected)
+            player_name = self._name_reader.read(frame.bgr, selected)
+            hp_numbers = read_values(self._name_reader, frame.bgr, selected, "hp")
+            mp_numbers = read_values(self._name_reader, frame.bgr, selected, "mp")
+            player_level, player_job, experience = read_character(
+                self._name_reader, frame.bgr, selected,
+            )
             result = ObservationResult(
                 observation_id=f"{frame.session_id}:{frame.frame_id}:{selected.version}",
                 session_id=frame.session_id, frame_id=frame.frame_id,
                 size_version=frame.size_version, source=frame.source,
                 source_size=(frame.width, frame.height), profile_version=selected.version,
-                processing_ms=round((time.monotonic() - start) * 1000, 3), hp=hp, mp=mp,
+                processing_ms=round((time.monotonic() - start) * 1000, 3),
+                player_name=player_name,
+                hp_numbers=hp_numbers, mp_numbers=mp_numbers,
+                player_level=player_level, player_job=player_job, experience=experience,
             )
             return ObservationSnapshot(frame=frame, result=result)
 

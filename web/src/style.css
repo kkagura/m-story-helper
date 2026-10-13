@@ -66,11 +66,39 @@ legend { padding: 0 6px; font-size: 13px; color: #b7c6d7; }
 .roi-editor > fieldset label { margin-right: 20px; font-size: 14px; }
 .screenshot-editor { display: block; width: 100%; margin-top: 16px; background: #0b1018; touch-action: none; user-select: none; cursor: crosshair; }
 .roi-box { fill: transparent; stroke-width: 2; pointer-events: none; }
-.roi-hp { stroke: #ff7373; }
-.roi-mp { stroke: #70ccff; }
-.roi-exp { stroke: #ffe66d; }
+.roi-hp_text { stroke: #ffb76d; }
+.roi-mp_text { stroke: #60e8eb; }
+.roi-exp_text { stroke: #e7ed9a; }
+.roi-player_level { stroke: #f29ad2; }
+.roi-player_job { stroke: #c4a27b; }
 .roi-player_info { stroke: #bd9cff; }
 .roi-player_name { stroke: #80e6bd; }
+.name-crop { display: block; width: min(680px, 100%); height: auto; margin-top: 16px; background: #0b1018; border: 1px solid #344055; }
+.recognition-toolbar { margin-top: 0; margin-bottom: 20px; }
+.card .recognition-toolbar { margin-top: 16px; }
+.recognition-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 20px; align-items: start; margin-top: 20px; }
+.recognition-image { min-width: 0; }
+.recognition-image .roi-editor, .recognition-image .screenshot-editor { margin-top: 0; }
+.configure-layout { grid-template-columns: minmax(0, 1fr); }
+.configure-layout .screenshot-editor { margin-top: 16px; }
+.recognition-empty { min-height: 300px; display: grid; place-items: center; color: #929fb3; background: #0b1018; border: 1px dashed #344055; border-radius: 8px; }
+.recognition-info { position: sticky; top: 20px; }
+.recognition-info h3 { margin: 0; font-size: 17px; font-weight: 600; }
+.recognition-values { margin: 20px 0 0; }
+.recognition-values > div { padding: 16px 0; border-bottom: 1px solid #344055; }
+.recognition-values > div:first-child { padding-top: 0; }
+.recognition-values dt { color: #a5afbf; font-size: 13px; }
+.recognition-values dd { margin: 8px 0 0; font-size: 23px; overflow-wrap: anywhere; }
+.recognition-values .reading-note { color: #f0d8a0; font-size: 13px; line-height: 1.6; }
+.recognition-values .value-percent { color: #a5afbf; font-size: 13px; line-height: 1.6; }
+.value-unit { margin-left: 8px; color: #929fb3; font-size: 12px; }
+.recognition-values .unsupported-value { color: #929fb3; font-size: 16px; }
+.recognition-diagnostics { margin-top: 20px; }
+.recognition-diagnostics summary { color: #a5afbf; font-size: 13px; cursor: pointer; }
+.recognition-diagnostics summary:focus-visible { outline: 2px solid #a7e5cf; outline-offset: 4px; }
+.ocr-options { margin-top: 16px; }
+.ocr-options label { font-size: 14px; color: #a5afbf; }
+.ocr-options input { width: 82px; margin-left: 12px; padding: 8px; border: 1px solid #48566b; border-radius: 4px; background: #10151e; color: #e8edf5; font: inherit; }
 .roi-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 16px; margin-top: 16px; }
 .roi-fields label { display: inline-flex; flex-direction: column; gap: 6px; margin: 6px 10px 10px 0; color: #a5afbf; font-size: 12px; }
 .roi-fields input { width: 82px; padding: 8px; background: #10151e; border: 1px solid #48566b; border-radius: 4px; color: #e8edf5; font: inherit; }
@@ -79,6 +107,9 @@ legend { padding: 0 6px; font-size: 13px; color: #b7c6d7; }
 .placeholder-title { color: #c9d4e3; font-size: 17px; }
 .error { margin-top: 24px; padding: 14px 18px; background: #392327; border: 1px solid #71444b; border-radius: 8px; color: #f2c0c6; line-height: 1.6; }
 @media (max-width: 900px) {
+  .recognition-layout { grid-template-columns: minmax(0, 1fr); }
+  .recognition-info { position: static; order: -1; }
+  .configure-layout .recognition-info { order: initial; }
   .app-content { grid-template-columns: 160px minmax(0, 1fr); }
   .page-content { padding: 20px; }
   .stats { grid-template-columns: 1fr; }

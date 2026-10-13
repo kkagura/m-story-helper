@@ -24,22 +24,27 @@ class VisionProfile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     schema_version: Literal[1] = 1
     reference_size: tuple[StrictInt, StrictInt]
-    hp: Rect | None = None
-    mp: Rect | None = None
-    exp: Rect | None = None
+    hp_text: Rect | None = None
+    mp_text: Rect | None = None
+    exp_text: Rect | None = None
+    player_level: Rect | None = None
+    player_job: Rect | None = None
     player_info: Rect | None = None
     player_name: Rect | None = None
-    min_channel: StrictInt = Field(default=80, ge=1, le=255)
-    min_color_difference: StrictInt = Field(default=35, ge=1, le=255)
-    min_column_fraction: float = Field(default=0.3, gt=0, le=1)
-    min_continuity: float = Field(default=0.9, gt=0, le=1)
+    player_name_min_confidence: float = Field(default=0.8, ge=0, le=1)
+    player_level_min_confidence: float = Field(default=0.6, ge=0, le=1)
+    numbers_min_confidence: float = Field(default=0.8, ge=0, le=1)
 
     @model_validator(mode="after")
     def validate_regions(self):
         width, height = self.reference_size
         if not (1 <= width <= 16384 and 1 <= height <= 16384):
             raise ValueError("参考尺寸必须为 1–16384 的整数")
-        for roi in (self.hp, self.mp, self.exp, self.player_info, self.player_name):
+        for roi in (
+            self.hp_text, self.mp_text,
+            self.exp_text, self.player_level, self.player_job,
+            self.player_info, self.player_name,
+        ):
             if roi and (roi.x + roi.width > width or roi.y + roi.height > height):
                 raise ValueError("识别区域超出参考画面")
         return self
@@ -50,13 +55,31 @@ class VisionProfile(BaseModel):
         return hashlib.sha256(data).hexdigest()[:16]
 
 
-class BarReading(BaseModel):
+class NameReading(BaseModel):
     model_config = ConfigDict(frozen=True)
     status: Literal["known", "unknown"]
-    ratio: float | None = Field(default=None, ge=0, le=1)
+    text: str | None = None
+    raw_text: str | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
     bbox: tuple[int, int, int, int] | None = None
-    quality: float = Field(default=0, ge=0, le=1)
     reason: str | None = None
+    processing_ms: float = 0
+    backend: str = "rapidocr-onnxruntime/1.4.4"
+
+
+class NumericReading(NameReading):
+    current: int | None = Field(default=None, ge=0)
+    total: int | None = Field(default=None, gt=0)
+    ratio: float | None = Field(default=None, ge=0, le=1)
+
+
+class LevelReading(NameReading):
+    value: int | None = Field(default=None, gt=0, le=9999)
+
+
+class ExperienceReading(NameReading):
+    value: int | None = Field(default=None, ge=0)
+    percentage: float | None = Field(default=None, ge=0, le=100)
 
 
 class ObservationResult(BaseModel):
@@ -70,5 +93,21 @@ class ObservationResult(BaseModel):
     profile_version: str
     bbox_format: Literal["xywh"] = "xywh"
     processing_ms: float
-    hp: BarReading
-    mp: BarReading
+    hp_numbers: NumericReading = Field(
+        default_factory=lambda: NumericReading(status="unknown", reason="region_not_configured")
+    )
+    mp_numbers: NumericReading = Field(
+        default_factory=lambda: NumericReading(status="unknown", reason="region_not_configured")
+    )
+    player_name: NameReading = Field(
+        default_factory=lambda: NameReading(status="unknown", reason="region_not_configured")
+    )
+    player_level: LevelReading = Field(
+        default_factory=lambda: LevelReading(status="unknown", reason="region_not_configured")
+    )
+    player_job: NameReading = Field(
+        default_factory=lambda: NameReading(status="unknown", reason="region_not_configured")
+    )
+    experience: ExperienceReading = Field(
+        default_factory=lambda: ExperienceReading(status="unknown", reason="region_not_configured")
+    )
