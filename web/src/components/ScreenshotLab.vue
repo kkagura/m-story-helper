@@ -8,14 +8,14 @@ const configuring = computed(() => props.mode === 'configure')
 const savedProfile = ref('')
 const regions = [
   'hp_text', 'mp_text', 'exp_text',
-  'player_info', 'player_name', 'player_level', 'player_job',
+  'player_info', 'player_name', 'player_level', 'player_job', 'scene',
 ] as const
 type RegionKind = typeof regions[number]
 const regionLabels: Record<RegionKind, string> = {
   hp_text: '血量数字（橙框）', mp_text: '蓝量数字（青框）',
   player_info: '角色信息栏（紫框）', player_name: '角色名称（绿框）',
   player_level: '角色等级（粉框）', player_job: '角色职业（棕框）',
-  exp_text: '经验数字（浅黄框）',
+  exp_text: '经验数字（浅黄框）', scene: '场景搜索范围（白框）',
 }
 
 const image = ref<ImportedImage | null>(null)
@@ -89,6 +89,48 @@ const characterReasons: Record<string, string> = {
 function characterReason(value: NameReading) {
   return value.reason ? characterReasons[value.reason] || value.reason : ''
 }
+const sceneLabels = { found: '找到名字', not_found: '未找到', ambiguous: '无法确认', unknown: '未知' }
+const sceneReasons: Record<string, string> = {
+  ...characterReasons,
+  identity_unknown: '左下角角色名未知，暂不定位。',
+  scene_not_configured: '请在设置中配置场景搜索范围。',
+  no_matching_name: '场景中未读到相同角色名。',
+  multiple_matching_names: '存在多个同名候选，无法确认。',
+  low_confidence: '同名文字置信度不足。',
+  scene_text_limit: '场景文字过多，请缩小搜索范围。',
+  scene_candidate_limit: '同名候选过多，暂不定位。',
+}
+const bodyLabels = { found: '找到人物模板', not_found: '未找到', ambiguous: '无法确认', unknown: '未知' }
+const bodyReasons: Record<string, string> = {
+  ...sceneReasons,
+  name_not_confirmed: '名字位置未确认，暂不检测人物。',
+  body_template_disabled: '未启用人物模板。',
+  body_dependency_missing: '缺少 OpenCV，请更新后端依赖。',
+  body_template_unavailable: '人物模板不可用，请检查 samples/normal.png。',
+  body_search_empty: '名字上方没有有效搜索空间。',
+  body_search_too_small: '搜索范围小于模板尺寸。',
+  body_low_texture: '画面纹理不足，无法匹配。',
+  no_body_match: '未找到匹配外观，动画、换装或遮挡可能影响结果。',
+  multiple_body_matches: '存在多个匹配人物，无法确认。',
+  body_candidate_limit: '人物候选过多，暂不确认。',
+  body_overlaps_ui: '最佳匹配与 UI 排除区重叠，暂不确认。',
+  body_not_above_name: '最佳匹配未与名字水平对应，暂不确认。',
+  body_matching_failed: '人物模板匹配失败。',
+}
+function addExclusion() {
+  if (!configuring.value || !profile.value || busy.value || profile.value.scene_exclusions.length >= 16) return
+  profile.value.scene_exclusions.push({ x: 0, y: 0,
+    width: Math.max(2, Math.min(100, profile.value.reference_size[0])),
+    height: Math.max(2, Math.min(100, profile.value.reference_size[1])),
+  })
+}
+function editExclusion(index: number, field: keyof Rect, event: Event) {
+  const region = profile.value?.scene_exclusions[index]
+  if (!configuring.value || !region || busy.value) return
+  const value = (event.target as HTMLInputElement).valueAsNumber
+  if (!Number.isInteger(value)) { error.value = '区域坐标和尺寸必须为整数。'; return }
+  region[field] = value
+}
 const characterFields = [
   { key: 'player_level', label: '角色等级' },
   { key: 'player_job', label: '角色职业' },
@@ -149,6 +191,7 @@ function adoptSize() {
   if (!configuring.value || !image.value || !profile.value) return
   const next: VisionProfile = { ...profile.value, reference_size: [image.value.width, image.value.height] }
   for (const kind of regions) next[kind] = null
+  next.scene_exclusions = []
   profile.value = next
 }
 
@@ -291,6 +334,26 @@ onBeforeUnmount(() => {
                 :width="profile[kind]?.width" :height="profile[kind]?.height"
                 :class="`roi-box roi-${kind}`" vector-effect="non-scaling-stroke" />
             </template>
+            <g v-if="configuring">
+            <rect v-for="(region, index) in profile.scene_exclusions" :key="`exclude-${index}`"
+              :x="region.x" :y="region.y" :width="region.width" :height="region.height"
+              class="roi-box roi-exclusion" vector-effect="non-scaling-stroke" />
+            </g>
+            <g v-if="result">
+              <rect v-for="(candidate, index) in result.scene_name.candidates" :key="`candidate-${index}`"
+                :x="candidate.bbox[0]" :y="candidate.bbox[1]" :width="candidate.bbox[2]" :height="candidate.bbox[3]"
+                :class="result.scene_name.status === 'found' ? 'roi-box scene-match' : 'roi-box scene-candidate'"
+                vector-effect="non-scaling-stroke" />
+              <rect v-if="result.player_body.search_bbox" :x="result.player_body.search_bbox[0]" :y="result.player_body.search_bbox[1]"
+                :width="result.player_body.search_bbox[2]" :height="result.player_body.search_bbox[3]"
+                class="roi-box body-search" vector-effect="non-scaling-stroke" />
+              <rect v-for="(candidate, index) in result.player_body.candidates" :key="`body-${index}`"
+                :x="candidate.bbox[0]" :y="candidate.bbox[1]" :width="candidate.bbox[2]" :height="candidate.bbox[3]"
+                :class="result.player_body.status === 'found' ? 'roi-box body-match' : 'roi-box scene-candidate'"
+                vector-effect="non-scaling-stroke" />
+              <circle v-if="result.player_body.bottom_center" :cx="result.player_body.bottom_center[0]" :cy="result.player_body.bottom_center[1]"
+                r="4" class="body-anchor" />
+            </g>
           </svg>
           <p v-if="configuring" class="detail">{{ image.width }} × {{ image.height }}</p>
           <div v-if="configuring" class="roi-fields">
@@ -309,9 +372,33 @@ onBeforeUnmount(() => {
         </div>
         <div v-else class="recognition-empty">上传游戏截图</div>
         <fieldset v-if="configuring && profile" class="ocr-options" :disabled="busy">
+          <legend>场景 UI 排除区</legend>
+          <button class="secondary" :disabled="profile.scene_exclusions.length >= 16" @click="addExclusion">添加排除区</button>
+          <div class="roi-fields">
+            <fieldset v-for="(region, index) in profile.scene_exclusions" :key="index">
+              <legend>排除区 {{ index + 1 }}</legend>
+              <label v-for="field in (['x', 'y', 'width', 'height'] as const)" :key="field">
+                {{ field }}<input :value="region[field]" type="number" step="1"
+                  :min="field === 'x' || field === 'y' ? 0 : 2" @input="editExclusion(index, field, $event)" />
+              </label>
+              <button class="secondary" @click="profile.scene_exclusions.splice(index, 1)">移除</button>
+            </fieldset>
+          </div>
+        </fieldset>
+        <fieldset v-if="configuring && profile" class="ocr-options" :disabled="busy">
+          <legend>人物模板匹配</legend>
+          <label>模板 <select v-model="profile.body_template"><option :value="null">关闭</option><option value="normal">normal.png 固定外观</option></select></label>
+          <label>最低匹配分 <input v-model.number="profile.body_min_score" type="number" min="0" max="1" step="0.05" /></label>
+          <label>搜索宽度 <input v-model.number="profile.body_search_width" type="number" min="32" max="1024" /></label>
+          <label>向上高度 <input v-model.number="profile.body_search_height" type="number" min="32" max="512" /></label>
+        </fieldset>
+        <fieldset v-if="configuring && profile" class="ocr-options" :disabled="busy">
           <legend>文字与数字 OCR</legend>
           <label>文字最低置信度（姓名/职业）
             <input v-model.number="profile.player_name_min_confidence" type="number" min="0" max="1" step="0.05" />
+          </label>
+          <label>场景名字最低置信度
+            <input v-model.number="profile.scene_name_min_confidence" type="number" min="0" max="1" step="0.05" />
           </label>
           <label>等级最低置信度
             <input v-model.number="profile.player_level_min_confidence" type="number" min="0" max="1" step="0.05" />
@@ -328,6 +415,18 @@ onBeforeUnmount(() => {
             <dt>角色名称</dt>
             <dd>{{ result ? (result.player_name.status === 'known' ? result.player_name.text : '未知') : analyzing ? '识别中…' : '待识别' }}</dd>
             <dd v-if="result?.player_name.reason" class="reading-note">{{ nameReasons[result.player_name.reason] || result.player_name.reason }}</dd>
+          </div>
+          <div>
+            <dt>场景名字定位</dt>
+            <dd>{{ result ? sceneLabels[result.scene_name.status] : analyzing ? '识别中…' : '待识别' }}</dd>
+            <dd v-if="result?.scene_name.name_bbox" class="value-percent">名字坐标 {{ result.scene_name.name_bbox[0] }}, {{ result.scene_name.name_bbox[1] }}</dd>
+            <dd v-if="result?.scene_name.reason" class="reading-note">{{ sceneReasons[result.scene_name.reason] || result.scene_name.reason }}</dd>
+          </div>
+          <div>
+            <dt>人物定位（模板匹配）</dt>
+            <dd>{{ result ? bodyLabels[result.player_body.status] : analyzing ? '识别中…' : '待识别' }}</dd>
+            <dd v-if="result?.player_body.bottom_center" class="value-percent">框底中心 {{ result.player_body.bottom_center.join(', ') }}</dd>
+            <dd v-if="result?.player_body.reason" class="reading-note">{{ bodyReasons[result.player_body.reason] || result.player_body.reason }}</dd>
           </div>
           <div v-for="kind in (['hp', 'mp'] as const)" :key="kind">
             <dt>{{ kind === 'hp' ? '血量' : '蓝量' }}<span class="value-unit">当前 / 总值</span></dt>
@@ -371,6 +470,11 @@ onBeforeUnmount(() => {
                 <image :href="preview" :width="image.width" :height="image.height" />
               </svg>
             </div>
+            <p class="detail">场景文字 {{ result.scene_name.text_count }} 个 · 同名候选 {{ result.scene_name.candidates.length }} 个 · {{ result.scene_name.processing_ms }} ms</p>
+            <p v-for="(candidate, index) in result.scene_name.candidates" :key="`detail-${index}`" class="detail">{{ candidate.text }} · 置信度 {{ candidate.confidence.toFixed(3) }} · 框 {{ candidate.bbox.join(', ') }}</p>
+            <p class="detail">人物匹配分 {{ result.player_body.score?.toFixed(3) ?? '未知' }} · {{ result.player_body.processing_ms }} ms · 模板 {{ result.player_body.template_id }} / {{ result.player_body.template_version }}</p>
+            <p class="detail">固定模板含样本背景，只适合相近外观、姿态和分辨率，尚未经过独立准确率验收。</p>
+            <p class="detail">绿色框为名字，蓝框为匹配的人物模板，虚线为搜索范围，蓝点为框底中心（不是实际脚底/着地检测）；尚未跟踪。</p>
             <p class="detail">帧 {{ result.frame_id }} · 配置 {{ result.profile_version }}</p>
           </template>
           <p v-if="image" class="detail">截图 {{ image.width }} × {{ image.height }}</p>

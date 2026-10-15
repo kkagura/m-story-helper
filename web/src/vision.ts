@@ -9,9 +9,16 @@ export interface VisionProfile {
   player_job: Rect | null
   player_info: Rect | null
   player_name: Rect | null
+  scene: Rect | null
+  scene_exclusions: Rect[]
+  scene_name_min_confidence: number
   player_name_min_confidence: number
   player_level_min_confidence: number
   numbers_min_confidence: number
+  body_template: 'normal' | null
+  body_min_score: number
+  body_search_width: number
+  body_search_height: number
 }
 export interface ImportedImage { image_id: string; width: number; height: number }
 export interface NameReading {
@@ -34,6 +41,32 @@ export interface ExperienceReading extends NameReading {
   value: number | null
   percentage: number | null
 }
+export interface SceneNameCandidate { text: string; confidence: number; bbox: [number, number, number, number] }
+export interface SceneNameReading {
+  status: 'found' | 'not_found' | 'ambiguous' | 'unknown'
+  target_name: string | null
+  name_bbox: [number, number, number, number] | null
+  candidates: SceneNameCandidate[]
+  search_bbox: [number, number, number, number] | null
+  reason: string | null
+  text_count: number
+  processing_ms: number
+  backend: string
+}
+export interface BodyCandidate { bbox: [number, number, number, number]; score: number }
+export interface BodyReading {
+  status: 'found' | 'not_found' | 'ambiguous' | 'unknown'
+  bbox: [number, number, number, number] | null
+  bottom_center: [number, number] | null
+  search_bbox: [number, number, number, number] | null
+  score: number | null
+  candidates: BodyCandidate[]
+  template_id: string | null
+  template_version: string | null
+  reason: string | null
+  processing_ms: number
+  method: 'template_matching'
+}
 export interface ObservationResult {
   observation_id: string
   session_id: string
@@ -49,6 +82,8 @@ export interface ObservationResult {
   player_level: LevelReading
   player_job: NameReading
   experience: ExperienceReading
+  scene_name: SceneNameReading
+  player_body: BodyReading
 }
 
 export async function visionRequest<T>(path: string, options: RequestInit): Promise<T> {

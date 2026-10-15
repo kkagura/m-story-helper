@@ -31,9 +31,16 @@ class VisionProfile(BaseModel):
     player_job: Rect | None = None
     player_info: Rect | None = None
     player_name: Rect | None = None
+    scene: Rect | None = None
+    scene_exclusions: tuple[Rect, ...] = Field(default=(), max_length=16)
+    scene_name_min_confidence: float = Field(default=0.8, ge=0, le=1)
     player_name_min_confidence: float = Field(default=0.8, ge=0, le=1)
     player_level_min_confidence: float = Field(default=0.6, ge=0, le=1)
     numbers_min_confidence: float = Field(default=0.8, ge=0, le=1)
+    body_template: Literal["normal"] | None = "normal"
+    body_min_score: float = Field(default=0.85, ge=0, le=1)
+    body_search_width: StrictInt = Field(default=220, ge=32, le=1024)
+    body_search_height: StrictInt = Field(default=180, ge=32, le=512)
 
     @model_validator(mode="after")
     def validate_regions(self):
@@ -44,6 +51,7 @@ class VisionProfile(BaseModel):
             self.hp_text, self.mp_text,
             self.exp_text, self.player_level, self.player_job,
             self.player_info, self.player_name,
+            self.scene, *self.scene_exclusions,
         ):
             if roi and (roi.x + roi.width > width or roi.y + roi.height > height):
                 raise ValueError("识别区域超出参考画面")
@@ -82,6 +90,47 @@ class ExperienceReading(NameReading):
     percentage: float | None = Field(default=None, ge=0, le=100)
 
 
+class SceneNameCandidate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    text: str
+    confidence: float = Field(ge=0, le=1)
+    bbox: tuple[int, int, int, int]
+
+
+class SceneNameReading(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    status: Literal["found", "not_found", "ambiguous", "unknown"] = "unknown"
+    target_name: str | None = None
+    name_bbox: tuple[int, int, int, int] | None = None
+    candidates: tuple[SceneNameCandidate, ...] = Field(default=(), max_length=32)
+    search_bbox: tuple[int, int, int, int] | None = None
+    reason: str | None = "scene_not_configured"
+    text_count: int = 0
+    processing_ms: float = 0
+    backend: str = "rapidocr-onnxruntime/1.4.4"
+
+
+class BodyCandidate(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    bbox: tuple[int, int, int, int]
+    score: float = Field(ge=0, le=1)
+
+
+class BodyReading(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    status: Literal["found", "not_found", "ambiguous", "unknown"] = "unknown"
+    bbox: tuple[int, int, int, int] | None = None
+    bottom_center: tuple[int, int] | None = None
+    search_bbox: tuple[int, int, int, int] | None = None
+    score: float | None = Field(default=None, ge=0, le=1)
+    candidates: tuple[BodyCandidate, ...] = Field(default=(), max_length=8)
+    template_id: str | None = None
+    template_version: str | None = None
+    reason: str | None = "name_not_confirmed"
+    processing_ms: float = 0
+    method: Literal["template_matching"] = "template_matching"
+
+
 class ObservationResult(BaseModel):
     model_config = ConfigDict(frozen=True)
     observation_id: str
@@ -111,3 +160,5 @@ class ObservationResult(BaseModel):
     experience: ExperienceReading = Field(
         default_factory=lambda: ExperienceReading(status="unknown", reason="region_not_configured")
     )
+    scene_name: SceneNameReading = Field(default_factory=SceneNameReading)
+    player_body: BodyReading = Field(default_factory=BodyReading)

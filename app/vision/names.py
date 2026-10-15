@@ -28,6 +28,21 @@ class PlayerNameReader:
             bgr, profile, profile.player_name, profile.player_name_min_confidence,
         )
 
+    def ensure_engine(self) -> str | None:
+        if self._initialization_error:
+            return self._initialization_error
+        if self._engine is None:
+            try:
+                self._engine = self._create_engine()
+            except ImportError:
+                self._initialization_error = "ocr_dependency_missing"
+            except Exception:
+                self._initialization_error = "ocr_initialization_failed"
+        return self._initialization_error
+
+    def detect_text(self, pixels: np.ndarray):
+        return self._engine(pixels, use_cls=False, text_score=0.0)
+
     def read_region(
         self, bgr: np.ndarray, profile: VisionProfile, roi: Rect | None, min_confidence: float,
     ) -> NameReading:
@@ -52,17 +67,9 @@ class PlayerNameReader:
             return unknown("region_out_of_bounds")
         if roi.width * roi.height > 1_000_000:
             return unknown("ocr_region_too_large")
-        if self._initialization_error:
-            return unknown(self._initialization_error)
-        if self._engine is None:
-            try:
-                self._engine = self._create_engine()
-            except ImportError:
-                self._initialization_error = "ocr_dependency_missing"
-                return unknown(self._initialization_error)
-            except Exception:
-                self._initialization_error = "ocr_initialization_failed"
-                return unknown(self._initialization_error)
+        error = self.ensure_engine()
+        if error:
+            return unknown(error)
 
         try:
             # White game text on dark UI becomes dark text on a light background.
@@ -73,7 +80,7 @@ class PlayerNameReader:
             image = image.resize(size, Image.Resampling.LANCZOS)
             image = ImageOps.expand(image, border=8, fill=255).convert("RGB")
             pixels = np.array(image)[:, :, ::-1].copy()
-            rows, _ = self._engine(pixels, use_cls=False, text_score=0.0)
+            rows, _ = self.detect_text(pixels)
             candidates = []
             for row in rows or []:
                 raw = str(row[1]).strip()

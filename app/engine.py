@@ -13,10 +13,12 @@ from pydantic import BaseModel
 
 from app.media.frames import ReceivedFrame
 from app.state.observation import ObservationSnapshot
+from app.vision.body import BodyLocator
 from app.vision.character import read_character
 from app.vision.models import ObservationResult, VisionFailure, VisionProfile
 from app.vision.names import PlayerNameReader
 from app.vision.numbers import read_values
+from app.vision.scene import locate_name
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,7 @@ class EngineService:
         self._analysis_task: asyncio.Task | None = None
         self._profile_lock = asyncio.Lock()
         self._name_reader = PlayerNameReader()
+        self._body_locator = BodyLocator()
 
     @property
     def profile(self) -> VisionProfile:
@@ -101,6 +104,8 @@ class EngineService:
             player_level, player_job, experience = read_character(
                 self._name_reader, frame.bgr, selected,
             )
+            scene_name = locate_name(self._name_reader, frame.bgr, selected, player_name)
+            player_body = self._body_locator.locate(frame.bgr, selected, scene_name)
             result = ObservationResult(
                 observation_id=f"{frame.session_id}:{frame.frame_id}:{selected.version}",
                 session_id=frame.session_id, frame_id=frame.frame_id,
@@ -110,6 +115,8 @@ class EngineService:
                 player_name=player_name,
                 hp_numbers=hp_numbers, mp_numbers=mp_numbers,
                 player_level=player_level, player_job=player_job, experience=experience,
+                scene_name=scene_name,
+                player_body=player_body,
             )
             return ObservationSnapshot(frame=frame, result=result)
 

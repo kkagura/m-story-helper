@@ -16,6 +16,7 @@ dependencies = [
     "numpy>=2,<3",
     "pillow>=11,<13",
     "rapidocr-onnxruntime==1.4.4",
+    "opencv-python>=4.8,<5",
 ]
 
 [project.optional-dependencies]

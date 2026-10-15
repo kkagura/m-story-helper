@@ -1,6 +1,7 @@
 import io
 import json
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -8,6 +9,7 @@ from pydantic import ValidationError
 
 from app.api.server import create_app
 from app.config import Settings
+from app.vision.body import BodyLocator
 from app.vision.models import Rect, VisionProfile
 from app.vision.names import PlayerNameReader
 
@@ -112,3 +114,37 @@ def test_invalid_image_size_and_region_are_rejected(tmp_path):
         body["hp_text"]["x"] = 1
         assert client.put("/api/vision/profile", json=body).status_code == 422
         assert not settings.vision_profile_path.exists()
+
+
+def test_scene_name_matches_same_uploaded_frame(tmp_path, monkeypatch):
+    template = np.random.default_rng(9).integers(0, 255, (10, 10, 3), dtype=np.uint8)
+    monkeypatch.setattr(BodyLocator, "load_template", lambda _: (template, "api-template"))
+    rows = iter([
+        [[[], "测试角色", 0.95]],
+        [[[[20, 30], [80, 30], [80, 40], [20, 40]], "测试角色", 0.95]],
+    ])
+    monkeypatch.setattr(PlayerNameReader, "_create_engine",
+                        lambda _: lambda *_a, **_k: (next(rows), []))
+    settings = Settings(vision_profile=str(tmp_path / "vision.json"),
+                        web_dist=str(tmp_path / "dist"))
+    image = Image.new("RGB", (100, 100), (64, 64, 64))
+    image.paste(Image.fromarray(template[:, :, ::-1]), (40, 15))
+    payload = io.BytesIO()
+    image.save(payload, format="PNG")
+    selected = VisionProfile(
+        reference_size=(100, 100), player_name=Rect(x=0, y=80, width=100, height=20),
+        scene=Rect(x=0, y=0, width=100, height=70),
+    )
+    with TestClient(create_app(settings), base_url="http://127.0.0.1:8765") as client:
+        image_id = client.post("/api/images", content=payload.getvalue()).json()["image_id"]
+        result = client.post(f"/api/images/{image_id}/analyze", json=selected.model_dump()).json()
+        assert result["session_id"] == image_id
+        assert result["player_name"]["text"] == result["scene_name"]["target_name"]
+        assert result["scene_name"]["status"] == "found"
+        assert result["scene_name"]["name_bbox"] == [20, 30, 60, 10]
+        assert result["player_body"]["status"] == "found"
+        assert result["player_body"]["bbox"] == [40, 15, 10, 10]
+        assert result["player_body"]["bottom_center"] == [45, 24]
+        assert result["player_body"]["template_version"] == "api-template"
+        assert client.put("/api/vision/profile", json=selected.model_dump()).status_code == 200
+        assert client.get("/api/vision/profile").json()["scene"] == selected.scene.model_dump()

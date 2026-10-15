@@ -73,6 +73,14 @@ legend { padding: 0 6px; font-size: 13px; color: #b7c6d7; }
 .roi-player_job { stroke: #c4a27b; }
 .roi-player_info { stroke: #bd9cff; }
 .roi-player_name { stroke: #80e6bd; }
+.roi-scene { stroke: #c9d4e3; stroke-dasharray: 8 4; }
+.roi-exclusion { stroke: #bd9cff; fill: #bd9cff22; stroke-dasharray: 4 4; }
+.scene-match { stroke: #6aefa7; stroke-width: 3; }
+.scene-candidate { stroke: #ffb76d; stroke-width: 3; }
+.body-search { stroke: #85a9ce; stroke-dasharray: 6 4; }
+.body-match { stroke: #70ccff; stroke-width: 3; }
+.body-anchor { fill: #70ccff; }
+.ocr-options select { max-width: 100%; padding: 8px; background: #10151e; color: #e8edf5; border: 1px solid #48566b; }
 .name-crop { display: block; width: min(680px, 100%); height: auto; margin-top: 16px; background: #0b1018; border: 1px solid #344055; }
 .recognition-toolbar { margin-top: 0; margin-bottom: 20px; }
 .card .recognition-toolbar { margin-top: 16px; }

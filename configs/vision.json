@@ -48,5 +48,36 @@
     "width": 140,
     "height": 14
   },
-  "player_level_min_confidence": 0.6
+  "player_level_min_confidence": 0.6,
+  "scene": {
+    "x": 8,
+    "y": 31,
+    "width": 1365,
+    "height": 693
+  },
+  "scene_exclusions": [
+    {
+      "x": 8,
+      "y": 31,
+      "width": 224,
+      "height": 199
+    },
+    {
+      "x": 1170,
+      "y": 31,
+      "width": 202,
+      "height": 67
+    },
+    {
+      "x": 1216,
+      "y": 644,
+      "width": 146,
+      "height": 81
+    }
+  ],
+  "scene_name_min_confidence": 0.8,
+  "body_template": "normal",
+  "body_min_score": 0.85,
+  "body_search_width": 220,
+  "body_search_height": 180
 }
