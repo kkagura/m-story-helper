@@ -16,7 +16,8 @@ from app.capture.images import Screenshot, decode_screenshot
 from app.config import Settings, load_settings
 from app.engine import EngineService, EngineStatus
 from app.media.service import AnswerResponse, MediaFailure, MediaService, MediaStatus, OfferRequest
-from app.vision.models import ObservationResult, VisionFailure, VisionProfile
+from app.vision.models import AnalysisRequest, ObservationResult, VisionFailure, VisionProfile
+from app.workflows.registry import WorkflowDescription
 
 logger = logging.getLogger(__name__)
 
@@ -128,18 +129,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await engine.save_profile(profile)
         return profile
 
+    @api.get("/api/workflows", response_model=tuple[WorkflowDescription, ...])
+    async def list_workflows() -> tuple[WorkflowDescription, ...]:
+        return engine.workflows.describe(engine.inspection_environment)
+
     @api.post("/api/images/{image_id}/analyze", response_model=ObservationResult)
-    async def analyze_image(image_id: UUID, profile: VisionProfile) -> ObservationResult:
+    async def analyze_image(
+        image_id: UUID, request: AnalysisRequest | VisionProfile,
+    ) -> ObservationResult:
         image = get_image(image_id)
-        observation = await engine.analyze(image.frame, profile)
+        profile = request.profile if isinstance(request, AnalysisRequest) else request
+        workflow = request.workflow if isinstance(request, AnalysisRequest) else None
+        observation = await engine.analyze(image.frame, profile, workflow)
         if get_image(image_id) is not image:
             raise VisionFailure(409, "图片在识别期间发生变化，请重试。")
         return observation.result
 
     @api.post("/api/media/{session_id}/analyze", response_model=ObservationResult)
-    async def analyze_video(session_id: UUID, profile: VisionProfile) -> ObservationResult:
+    async def analyze_video(
+        session_id: UUID, request: AnalysisRequest | VisionProfile,
+    ) -> ObservationResult:
         frame = media.analysis_frame(str(session_id))
-        observation = await engine.analyze(frame, profile)
+        profile = request.profile if isinstance(request, AnalysisRequest) else request
+        workflow = request.workflow if isinstance(request, AnalysisRequest) else None
+        observation = await engine.analyze(frame, profile, workflow)
         media.validate_analysis_frame(frame)
         return observation.result
 

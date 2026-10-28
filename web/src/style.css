@@ -138,3 +138,25 @@ legend { padding: 0 6px; font-size: 13px; color: #b7c6d7; }
   .capture-actions { grid-template-columns: 1fr; }
   .capture-preview { height: clamp(220px, 40vh, 360px); }
 }
+
+.dialogue-result { margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #344055; }
+.dialogue-status { color: #a7e5cf; font-size: 14px; }
+.dialogue-values { margin: 16px 0; }
+.dialogue-values > div { margin: 12px 0; }
+.dialogue-values dt { color: #a5afbf; font-size: 12px; }
+.dialogue-values dd { margin: 6px 0 0; font-size: 15px; overflow-wrap: anywhere; }
+.dialogue-result .reading-note { color: #f0d8a0; font-size: 13px; line-height: 1.6; }
+.dialogue-text { white-space: pre-wrap; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.dialogue-options { padding-left: 18px; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.dialogue-overlays { fill: none; pointer-events: none; }
+.dialogue-panel-box { stroke: #e8df9b; stroke-width: 3; }
+.dialogue-candidate-box { stroke: #ffb76d; stroke-width: 3; stroke-dasharray: 6 4; }
+.dialogue-option-box { stroke: #b5a2f5; stroke-width: 2; }
+.dialogue-target-box { stroke: #62edba; stroke-width: 4; }
+
+.workflow-selector { margin: 16px 0; min-width: 0; }
+.workflow-selector label { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
+.workflow-selector select, .workflow-selector input, .workflow-selector textarea { min-width: 0; max-width: 100%; padding: 6px; color: #e8edf5; background: #10151e; border: 1px solid #48566b; }
+.workflow-selector textarea { width: 100%; font-family: monospace; }
+.workflow-parameters { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 12px 0; }
+.workflow-parameters input { width: 100%; }

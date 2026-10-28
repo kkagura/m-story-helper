@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
+from app.workflows.inspection import InspectionSelection, WorkflowInspection
+
 
 class VisionFailure(Exception):
     def __init__(self, status_code: int, detail: str) -> None:
@@ -131,6 +133,39 @@ class BodyReading(BaseModel):
     method: Literal["template_matching"] = "template_matching"
 
 
+Box = tuple[int, int, int, int]
+
+
+class DialogueText(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    text: str = Field(max_length=256)
+    confidence: float = Field(ge=0, le=1)
+    bbox: Box
+
+
+class DialogueOption(DialogueText):
+    kind: Literal["button", "material"]
+    count: int | None = None
+
+
+class DialogueReading(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    status: Literal["found", "not_found", "ambiguous", "unknown"] = "unknown"
+    panel_bbox: Box | None = None
+    candidates: tuple[Box, ...] = Field(default=(), max_length=8)
+    npc_name: str | None = None
+    npc_confidence: float | None = None
+    npc_bbox: Box | None = None
+    text: str = ""
+    texts: tuple[DialogueText, ...] = Field(default=(), max_length=64)
+    body_texts: tuple[DialogueText, ...] = Field(default=(), max_length=64)
+    options: tuple[DialogueOption, ...] = Field(default=(), max_length=64)
+    reason: str | None = "not_analyzed"
+    processing_ms: float = 0
+    method: str = "frame_edges_then_light_panel"
+    backend: str = "rapidocr-onnxruntime/1.4.4"
+
+
 class ObservationResult(BaseModel):
     model_config = ConfigDict(frozen=True)
     observation_id: str
@@ -162,3 +197,11 @@ class ObservationResult(BaseModel):
     )
     scene_name: SceneNameReading = Field(default_factory=SceneNameReading)
     player_body: BodyReading = Field(default_factory=BodyReading)
+    dialogue: DialogueReading | None = None
+    workflow_inspection: WorkflowInspection | None = None
+
+
+class AnalysisRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    profile: VisionProfile
+    workflow: InspectionSelection | None = None

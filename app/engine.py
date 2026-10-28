@@ -19,6 +19,10 @@ from app.vision.models import ObservationResult, VisionFailure, VisionProfile
 from app.vision.names import PlayerNameReader
 from app.vision.numbers import read_values
 from app.vision.scene import locate_name
+from app.workflows import create_builtin_registry
+from app.workflows.inspection import InspectionContext, InspectionSelection, WorkflowInspection
+from app.workflows.perception import SnapshotPerception
+from app.workflows.registry import WorkflowEnvironment, WorkflowUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +56,10 @@ class EngineService:
         self._profile_lock = asyncio.Lock()
         self._name_reader = PlayerNameReader()
         self._body_locator = BodyLocator()
+        self.workflows = create_builtin_registry()
+        self.inspection_environment = WorkflowEnvironment(
+            capabilities=frozenset({"dialogue_reading", "npc_name_reading", "npc_body_matching"}),
+        )
 
     @property
     def profile(self) -> VisionProfile:
@@ -90,11 +98,23 @@ class EngineService:
                 raise
 
     async def analyze(
-        self, frame: ReceivedFrame, profile: VisionProfile | None = None
+        self, frame: ReceivedFrame, profile: VisionProfile | None = None,
+        workflow: InspectionSelection | None = None,
     ) -> ObservationSnapshot:
         if self._analysis_task is not None and not self._analysis_task.done():
             raise VisionFailure(429, "已有识别正在进行，请稍后重试。")
         selected = profile if profile is not None else self.profile
+        prepared = None
+        if workflow is not None:
+            try:
+                prepared = self.workflows.prepare_inspection(
+                    workflow.plugin_id, workflow.plugin_version, workflow.params,
+                    self.inspection_environment,
+                )
+            except WorkflowUnavailable as exc:
+                raise VisionFailure(422, "; ".join(exc.report.reasons)) from exc
+            except ValueError as exc:
+                raise VisionFailure(409, "流程插件注册契约发生变化，请重启并检查注册。") from exc
 
         def run():
             start = time.monotonic()
@@ -118,6 +138,42 @@ class EngineService:
                 scene_name=scene_name,
                 player_body=player_body,
             )
+            snapshot = ObservationSnapshot(frame=frame, result=result)
+            if prepared is not None:
+                perception = SnapshotPerception(snapshot, self._name_reader, selected)
+                inspection_started = time.monotonic()
+                context = InspectionContext(snapshot, perception, inspection_started + 60)
+                try:
+                    inspected = prepared.plugin.evaluate(context, prepared.params)
+                    context.checkpoint()
+                    if not isinstance(inspected, WorkflowInspection):
+                        raise ValueError("Plugin must return WorkflowInspection")
+                    inspected = WorkflowInspection.model_validate(
+                        inspected.model_dump(), strict=True,
+                    )
+                    if (inspected.observation_id != result.observation_id
+                            or inspected.plugin_id != workflow.plugin_id
+                            or inspected.plugin_version != workflow.plugin_version):
+                        raise ValueError("Inspection does not belong to the selected snapshot")
+                    for annotation in inspected.annotations:
+                        x, y, w, h = annotation.bbox
+                        if x + w > frame.width or y + h > frame.height:
+                            raise ValueError("Inspection annotation exceeds source frame")
+                except Exception as exc:
+                    inspected = WorkflowInspection(
+                        plugin_id=workflow.plugin_id, plugin_version=workflow.plugin_version,
+                        observation_id=result.observation_id, status="unknown",
+                        diagnostics=("判断超时" if isinstance(exc, TimeoutError) else "插件判断失败",),
+                    )
+                inspected = inspected.model_copy(update={
+                    "processing_ms": round((time.monotonic() - inspection_started) * 1000, 3),
+                })
+                result = result.model_copy(update={
+                    "dialogue": perception.cached_dialogue, "workflow_inspection": inspected,
+                })
+            result = result.model_copy(update={
+                "processing_ms": round((time.monotonic() - start) * 1000, 3),
+            })
             return ObservationSnapshot(frame=frame, result=result)
 
         task = asyncio.create_task(asyncio.to_thread(run))

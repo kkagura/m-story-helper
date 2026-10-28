@@ -67,6 +67,68 @@ export interface BodyReading {
   processing_ms: number
   method: 'template_matching'
 }
+export interface DialogueText {
+  text: string
+  confidence: number
+  bbox: [number, number, number, number]
+}
+export interface DialogueOption extends DialogueText {
+  kind: 'button' | 'material'
+  count: number | null
+}
+export interface DialogueReading {
+  status: 'found' | 'not_found' | 'ambiguous' | 'unknown'
+  panel_bbox: [number, number, number, number] | null
+  candidates: [number, number, number, number][]
+  npc_name: string | null
+  npc_confidence: number | null
+  npc_bbox: [number, number, number, number] | null
+  text: string
+  texts: DialogueText[]
+  body_texts: DialogueText[]
+  options: DialogueOption[]
+  reason: string | null
+  processing_ms: number
+  method: string
+  backend: string
+}
+export interface ParameterProperty {
+  type?: string
+  title?: string
+  description?: string
+  default?: unknown
+  enum?: (string | number | boolean)[]
+  minimum?: number
+  maximum?: number
+  minLength?: number
+  maxLength?: number
+}
+export interface WorkflowDescription {
+  metadata: { id: string; version: string; name: string; category: string; description: string }
+  params_schema: { properties?: Record<string, ParameterProperty>; required?: string[] }
+  available: boolean
+  unavailable_reasons: string[]
+  inspection_available: boolean
+  inspection_unavailable_reasons: string[]
+}
+export interface InspectionAnnotation {
+  id: string; label: string; kind: 'region' | 'candidate' | 'target'
+  bbox: [number, number, number, number]
+}
+export interface WorkflowInspection {
+  plugin_id: string
+  plugin_version: string
+  observation_id: string
+  status: 'found' | 'not_found' | 'ambiguous' | 'unknown'
+  stage_id: string
+  stage_label: string
+  fields: { key: string; label: string; value: string | number | boolean | null }[]
+  annotations: InspectionAnnotation[]
+  intent: { kind: string; label: string; reason: string; target_id: string | null; execution_authorized: false } | null
+  missing_conditions: string[]
+  diagnostics: string[]
+  processing_ms: number
+}
 export interface ObservationResult {
   observation_id: string
   session_id: string
@@ -84,6 +146,8 @@ export interface ObservationResult {
   experience: ExperienceReading
   scene_name: SceneNameReading
   player_body: BodyReading
+  dialogue: DialogueReading | null
+  workflow_inspection: WorkflowInspection | null
 }
 
 export async function visionRequest<T>(path: string, options: RequestInit): Promise<T> {

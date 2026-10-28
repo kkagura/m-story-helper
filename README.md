@@ -2,7 +2,7 @@
 
 Windows 本地视觉识别与离线自动化研究项目。浏览器负责选择共享窗口，Python 负责画面接收、识别及任务引擎；详细设计见 [技术方案.md](技术方案.md)，进度见 [todo.md](todo.md)。
 
-流程开发见 [Python 流程插件接口](docs/workflow-plugin-spec.md)：包含插件元数据、启动参数、运行上下文、工具入参与回执、结果和取消语义。流程用 Python 编排，共用工具提交受控操作；JSON 仅用于参数/设置。首份场景见 [中士材料兑换步骤](workflows/orbis_charlie_exchange/README.md)。当前仅交付设计契约，插件运行器、共用工具和兑换插件尚未实现；上传/固定目录加载留待后续。
+流程开发见 [Python 流程插件接口](docs/workflow-plugin-spec.md)。已编写基础 SDK、显式注册、只读单步判断与共用感知缓存；识别测试页可选择流程、自动编辑参数并通用展示结果。当前中士插件支持识别，自动执行仍不可用；真实 OCR/宿主机测试待验证。完整运行器、输入工具、上传/目录加载和真实兑换留后续。
 
 ## 当前实现
 
@@ -238,3 +238,65 @@ main.py               源码启动入口
 ```
 
 开发与交付须遵循 [AGENTS.md](AGENTS.md)，同步待办与技术方案。
+
+
+## 流程插件骨架验证（宿主机）
+
+在 Windows 项目根目录 `E:\wang\m-story-helper` 逐条执行，无新增依赖，无需前端构建：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_workflows.py -q
+.\.venv\Scripts\python.exe -m ruff check app/workflows tests/test_workflows.py
+```
+
+预期测试全部通过，Ruff 无问题。测试只验证 SDK、注册/参数/模型与协作式上下文，不使用游戏、真实 OCR 或系统输入，不能证明兑换或独立执行租约可用。请保留完整失败输出供修复；宿主机验证通过前，相关待办保持未完成。
+
+
+## 基础信息与可选流程测试
+
+重启后端并打开“识别测试”：
+
+1. 上传截图；默认“仅基础信息”，点击“开始识别”读取角色、血蓝、经验等，不执行流程感知。
+2. 在“流程识别”选择“天空之城中士臼齿兑换（单轮）”，需要时展开“流程参数”修改 NPC、材料和数量。
+3. 再次识别，右侧“流程信息”显示阶段、字段、下一步意图、缺失条件与诊断；原图显示插件提供的标注。
+4. 切换流程/修改参数会清空旧结果。自动执行未就绪不影响识别测试；所有意图只读，不授权点击。
+
+在 samples/tasks 中，1.png 无对话面板，2–6 的预期阶段为介绍/交易/材料/确认/成功提示；4–6 无可见 NPC 标签，应显示未知/缺少身份依据。图4仅提议查找目标材料，图6不会被当作整轮已完成。这里是人工核对预期，不是已通过的真实 OCR 验收。
+
+插件通过同一个 evaluate → decide 函数判断；通用感知只提取文字/位置，页面没有中士阶段/材料关键词。新增契约内的流程只需添加插件及注册项；基础信息失败不自动阻止流程分析。表单支持常规标量/枚举，其他参数用 JSON 对象编辑，后端严格校验。
+
+在宿主机项目根目录逐条检查：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_workflows.py tests/test_dialogue.py tests/test_workflow_inspection.py tests/test_vision.py -q
+.\.venv\Scripts\python.exe -m ruff check app/workflows app/vision/dialogue.py app/vision/models.py app/engine.py app/api/server.py tests/test_workflows.py tests/test_dialogue.py tests/test_workflow_inspection.py
+pnpm --dir web typecheck
+```
+
+预期测试及代码检查通过、前端无类型错误。Vite 开发模式无需 build；使用后端托管生产静态文件时需构建并重启。当前只有虚拟机静态检查，不代替这些宿主机检查、真实 OCR 和浏览器展示验收。
+
+
+图片3出现 `no_dialogue_panel` 时表示尚未定位对话框，尚未进入该区域的 OCR，不是没有按顺序上传。定位器已增加完整边框检测，保留原亮色区域作为兜底。重启后端后重新上传测试，无需前端构建；请在宿主机运行以下检查（真实样本几何回归不调用 OCR）：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_dialogue.py -q
+.\.venv\Scripts\python.exe -m ruff check app/vision/dialogue.py app/vision/models.py tests/test_dialogue.py
+```
+
+新增回归预期：1.png 无对话框；2–6.png 各定位唯一完整对话框并覆盖按钮栏。随后页面复测图3是否进入“交易说明”；定位通过与 OCR/页面识别通过分别记录。
+
+
+初始场景识别：中士插件1.2.0在未找到对话框时，会从设置中的“场景搜索范围”查找目标NPC名字（默认查里中士）。重启后端、刷新页面、选择流程并上传1.png；预期唯一高分名字匹配时显示“等待与NPC交互”及标签框，诊断会说明身体/点击区域尚未验证。不配置scene会返回未知；不按参数虚构NPC，实际OCR效果待宿主机验证，无需前端构建。
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_npc_initial.py tests/test_workflow_inspection.py tests/test_workflows.py tests/test_dialogue.py -q
+.\.venv\Scripts\python.exe -m ruff check app/workflows app/engine.py tests/test_npc_initial.py tests/test_workflows.py tests/test_dialogue.py tests/test_workflow_inspection.py
+```
+
+
+NPC人物框：中士插件1.3.0在名字确认后继续做外观模板匹配，成功时显示人物矩形、匹配分和候选点击中心；绿色意图框指向人物，不再指向名字。只有名字而外观不匹配时不提供点击意图。重启后端、刷新页面并重新选择流程，用图片1复测；Vite无需构建。模板仅覆盖现有中士外观，中心可点击性待游戏实测。
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_npc_body.py tests/test_npc_initial.py tests/test_workflow_inspection.py tests/test_workflows.py tests/test_dialogue.py -q
+.\.venv\Scripts\python.exe -m ruff check app/vision/npc_body.py app/workflows app/engine.py tests/test_npc_body.py tests/test_npc_initial.py tests/test_workflow_inspection.py tests/test_workflows.py tests/test_dialogue.py
+```

@@ -1,8 +1,8 @@
 # Python 流程插件接口（供开发者与智能体阅读）
 
-文档版本：1.0；日期：2026-10-27；拟定插件接口版本：`api_version = 1`。
+文档版本：1.6；日期：2026-10-28；插件接口版本：`api_version = 1`。
 
-**状态：设计契约，尚未实现插件 SDK、注册表、运行器或下述工具接口。** 当前代码以手动截图/视频帧识别为主，已有 `app/state/observation.py` 的同帧快照；不能把本文示例当作现有可调用 API。总体方案见 [技术方案](../技术方案.md)，实施状态见 [待办](../todo.md)。
+**状态：已编写插件基础 SDK、显式注册表、协作式上下文和中士占位插件；新增可选 evaluate 单步判断接口、缓存感知、流程列表 API 和通用截图测试；自动运行器、输入工具和真实兑换未实现。** SDK 与测试尚待宿主机验证。异步执行/等待工具仍只有 Protocol 声明；只读对话感知已实现接入，真实 OCR 与输入能力仍需分别验收。当前识别代码仍以手动截图/视频帧为主。总体方案见 [技术方案](../技术方案.md)，实施状态见 [待办](../todo.md)。
 
 ## 1. 范围与职责
 
@@ -17,59 +17,18 @@
 
 内置流程可以直接编排确定性的工具调用，不要求每个步骤调用决策插件。后续需要模型规划时，另提供经兼容检查的规划工具，仍按第 4.7 节计划契约执行，本文不提前引入该接口。
 
-首个插件版本只显式注册随项目发布的可信 Python 插件，每次运行创建独立实例。目录发现、上传安装、热更新、第三方依赖和不可信代码隔离属于后续事项；现在仅固定接口，不实现外部加载。工具调用约束是可信代码的开发规则，不是 Python 沙箱。
+首个插件版本只显式注册随项目发布的可信 Python 插件，每次运行/手动判断创建独立实例。目录发现、上传安装、热更新、第三方依赖和不可信代码隔离属于后续事项；现在仅固定接口，不实现外部加载。工具调用约束是可信代码的开发规则，不是 Python 沙箱。
 
 ## 2. 插件接口
 
-以下类型骨架用于说明签名；所引用的上下文、工具和证据模型见后文，均为拟定类型。
+接口位于 [base.py](../app/workflows/base.py)。下面摘录插件签名；元数据、证据、回执和返回值采用严格且冻结的 Pydantic 模型，完整字段见后文及源码。工具签名位于 [tools/base.py](../app/workflows/tools/base.py)，输入工具实现留待后续；只读感知已按第7节接入。
 
 ```python
-from dataclasses import dataclass
-from typing import Any, Generic, Literal, Mapping, Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar
 from pydantic import BaseModel
+from app.workflows.base import WorkflowContext, WorkflowMetadata, WorkflowResult
 
 ParamsT = TypeVar("ParamsT", bound=BaseModel)
-
-@dataclass(frozen=True)
-class WorkflowMetadata:
-    id: str
-    api_version: int
-    version: str
-    task_id: str
-    name: str
-    category: Literal["observation", "navigation", "combat", "quest"]
-    description: str
-    tags: tuple[str, ...]
-    required_capabilities: tuple[str, ...]
-    allowed_actions: tuple[str, ...]
-
-@dataclass(frozen=True)
-class EvidenceRef:
-    id: str
-    observation_id: str
-    session_id: str
-    frame_id: int
-    size_version: int
-    profile_version: str
-
-@dataclass(frozen=True)
-class WorkflowResult:
-    status: Literal["succeeded", "failed", "paused", "cancelled"]
-    code: str
-    message: str
-    last_step: str | None
-    data: Mapping[str, Any]
-    evidence: tuple[EvidenceRef, ...]
-
-class WorkflowContext(Protocol):
-    run_id: str
-    session_id: str
-    mode: Literal["mock", "real"]
-    deadline_monotonic: float
-    tools: "WorkflowTools"
-
-    async def checkpoint(self) -> None: ...
-    async def set_step(self, step_id: str, *, timeout_ms: int) -> None: ...
 
 class WorkflowPlugin(Protocol, Generic[ParamsT]):
     metadata: WorkflowMetadata
@@ -93,13 +52,13 @@ class WorkflowPlugin(Protocol, Generic[ParamsT]):
 | `name/category/description/tags` | 页面名称、分类、说明和标签；分类不会授予执行能力 |
 | `required_capabilities` | 需要的注册能力，如 `npc_detection`、`dialogue_ocr`、`dialogue_scroll`、`bounded_input`；按当前适配器判断可用性 |
 | `allowed_actions` | 允许请求的底层动作，如 `mouse_click`、`mouse_scroll`；空集合表示只读，与任务/控制器/宿主许可取交集，不是脚本自授权 |
-| `params_model` | Pydantic 参数模型类；输出参数描述供页面生成表单，由后端创建类型化参数实例 |
+| `params_model` | 继承 WorkflowParams 的 Pydantic 参数模型类；严格校验、冻结、拒绝额外字段；输出参数描述供页面生成表单，由后端创建类型化参数实例 |
 
 注册表输出插件描述（以上元数据和参数 schema）及 `available: bool`、`unavailable_reasons: list[str]`。重复 ID、参数模型无效或不支持接口版本是注册错误；缺少感知或输入能力可展示为不可用，不假装插件已经能运行。Mock 能力不等于真实模式能力。
 
 ### 2.2 启动请求与 `params` 入参
 
-后续通过 `GET /api/workflows` 查询注册描述；`POST /api/tasks/{task_id}/validate` 和 `/start` 接收下表流程模式字段，run_kind=workflow。路由 task_id 须与插件 metadata.task_id 一致。与 run_kind=planner 的决策路径互斥，流程模式不同时传 planner 配置；当前这些接口均未实现。
+后续通过 `GET /api/workflows` 查询注册描述；`POST /api/tasks/{task_id}/validate` 和 `/start` 接收下表流程模式字段，run_kind=workflow。路由 task_id 须与插件 metadata.task_id 一致。与 run_kind=planner 的决策路径互斥，流程模式不同时传 planner 配置；当前已实现 GET /api/workflows；任务 validate/start 尚未实现，手动图片/视频分析按第7节使用。
 
 | 启动字段 | 输入语义 |
 | --- | --- |
@@ -116,10 +75,10 @@ validate 输出 `valid: bool` 与 `reasons: list[str]`；start 校验成功后�
 例如兑换业务参数模型（也作为后文伪代码的入参）：
 
 ```python
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
+from app.workflows.base import WorkflowParams
 
-class CharlieExchangeParams(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+class CharlieExchangeParams(WorkflowParams):
 
     npc_name: str = Field(default="查里中士", min_length=1, max_length=100)
     material_name: str = Field(default="僵尸丢失的臼齿", min_length=1, max_length=100)
@@ -132,7 +91,7 @@ class CharlieExchangeParams(BaseModel):
 
 ### 2.3 `ctx` 入参
 
-上下文由核心引擎构造，插件只读取，不能自行替换工具、会话、截止时间或预算。Protocol 表达访问接口，实际实现需提供只读属性，不靠类型注解实现权限控制。
+已编写 [RunContext/WorkflowControl](../app/workflows/context.py) 基础组件，待运行器接入。上下文由核心引擎构造，插件只读取，不能自行替换工具、会话、截止时间或预算。Protocol 表达访问接口，实际实现需提供只读属性，不靠类型注解实现权限控制。
 
 | 成员 | 语义 |
 | --- | --- |
@@ -141,13 +100,15 @@ class CharlieExchangeParams(BaseModel):
 | `deadline_monotonic` | 单调时钟的当前活跃执行截止时间；不使用墙上时钟，也不允许脚本延长 |
 | `tools` | 本轮有能力/权限约束的工具门面；不暴露原始 Windows 输入适配器 |
 | `await checkpoint()` | 检查停止、暂停、会话有效性和预算；循环每轮必须调用，工具自身也检查 |
-| `await set_step(step_id, timeout_ms=...)` | 记录当前业务步骤，设定不可自动重置的步骤截止时间并检查取消；timeout_ms 为 100–60000 且受运行预算约束，不执行动作、不创建可恢复的程序计数器 |
+| `await set_step(step_id, timeout_ms=...)` | 记录当前业务步骤，设定不可自动重置的步骤截止时间并检查取消；timeout_ms 为 100–60000 且受运行预算约束，当前仅保存步骤/时限，不推送事件，不执行动作、不创建可恢复的程序计数器 |
+
+当前 RunContext 使用冻结 dataclass 和引擎持有的 WorkflowControl，checkpoint 协作检查停止、暂停、会话失效、运行/步骤截止时间，set_step 最多保存 256 个不同步骤。同名步骤再次进入只收紧原截止时间，防止重置。control 不交给插件。尚无后台监测、任务调度、步骤事件推送、动作计数、执行租约或窗口时效校验；这些由后续运行器/工具/执行层实现，不能用当前 checkpoint 代替。
 
 执行预算、动作次数、窗口绑定版本等由引擎持有。插件不直接引用媒体缓存和跨帧可变检测；工具返回只读快照或受限引用，历史/在途证据均须有数量、时间和字节上限。
 
 ## 3. 共用工具的入参与返回值
 
-`WorkflowTools` 拟提供 `vision`、`mouse`、`keyboard`、`dialogue` 四组接口。下表是后续实现目标，并非当前已有方法。所有异步工具接受正整数 `timeout_ms`，范围 100–60000；有效时限取工具、步骤和运行剩余时间的最小值。组合工具不得给每个子调用重新分配完整时限。
+`WorkflowTools` 已声明 `vision`、`mouse`、`keyboard`、`dialogue` 四组 Protocol 接口及只读数据引用。下表签名已有声明，但没有任何工具实现，输入约束/页面校验/取消和预算执行均为后续目标。所有异步工具接受正整数 `timeout_ms`，范围 100–60000；有效时限取工具、步骤和运行剩余时间的最小值。组合工具不得给每个子调用重新分配完整时限。
 
 ### 3.1 统一返回包装
 
@@ -165,7 +126,7 @@ class CharlieExchangeParams(BaseModel):
 
 `ActionReceipt` 包含 `action_ids: tuple[str, ...]`、`effect: not_sent/sent/outcome_unknown`、`verification: not_checked/confirmed/unknown`、`evidence`。只要部分输入可能已发送就不能返回 not_sent；引擎仍记录全部子动作/结果。sent 不代表画面结果已验证，停止时也可能 outcome_unknown。
 
-`EvidenceRef` 的 profile_version 为当前视觉配置的内容版本字符串，与现有快照结果一致。完整证据由引擎记录工具 ID、运行/步骤、时钟、来源、前后观测与原因；引用不能赋予访问任意文件的能力。
+EvidenceRef 包括 id/run_id/observation_id/session_id/frame_id/size_version/profile_version，新增的 run_id 用于核验本次运行归属；观测尚无运行时由后续工具包装生成引用。profile_version 为当前视觉配置的内容版本字符串，与现有快照结果一致。完整证据由引擎记录工具 ID、运行/步骤、时钟、来源、前后观测与原因；引用不能赋予访问任意文件的能力。
 
 ### 3.2 数据类型
 
@@ -215,7 +176,7 @@ after 由插件传入之前的页面证据，工具核验其所属上下文；�
 
 ## 4. `run()` 返回值、异常和生命周期
 
-run 是一次运行协程，执行步骤并返回 WorkflowResult，不返回任意可执行代码。返回值中所有字段必填，无内容时使用 None/空映射/空元组。
+run 是一次运行协程，执行步骤并返回 WorkflowResult，不返回任意可执行代码。返回值中所有字段必填，无内容时使用 None/空映射/空元组。SDK 校验摘要为有限可序列化数据且 UTF-8 JSON 不超过 16 KiB，证据引用至多 32 条；succeeded 必须附证据，但 SDK 不判断业务事实，不等于独立成功验证通过。冻结模型仅限制字段赋值，嵌套 data/参数容器仍须由后续运行器复制、冻结或重新校验，不把它当作安全沙箱。
 
 | 输出字段 | 约束 |
 | --- | --- |
@@ -235,7 +196,7 @@ run 是一次运行协程，执行步骤并返回 WorkflowResult，不返回任�
 
 ## 5. 兑换流程使用示意
 
-本段是调用示意，`WorkflowTools` 等尚未实现；不是可注册的完整插件。完整步骤/截图依据见 [兑换说明](../workflows/orbis_charlie_exchange/README.md)。下面仅展示“同意交易后等待材料列表”的入参与结果处理，其他步骤使用同样规则：
+本段是未来工具调用示意；工具只有 Protocol 声明，不是可注册的完整兑换实现。完整步骤/截图依据见 [兑换说明](../workflows/orbis_charlie_exchange/README.md)。下面仅展示“同意交易后等待材料列表”的入参与结果处理，其他步骤使用同样规则：
 
 ```python
 async def agree_trade(ctx, params, trade_page):
@@ -260,7 +221,9 @@ async def agree_trade(ctx, params, trade_page):
 
 ## 6. 注册、扩展与验收
 
-后续建议目录：`app/workflows/base.py`（契约）、`registry.py`（显式注册/工厂）、`runtime.py`（运行协调）、`tools/`（共用工具）、`builtin/`（内置流程）；当前均未建立。注册表保存插件工厂，每次运行创建实例，防止不同运行共享可变状态；不从用户配置动态导入任意模块。
+已建立 [base.py](../app/workflows/base.py)（模型与 Protocol）、[registry.py](../app/workflows/registry.py)（显式注册/工厂及预检）、[context.py](../app/workflows/context.py)（协作式上下文）、tools/base.py（工具签名）、[中士占位插件](../app/workflows/builtin/charlie_exchange.py) 和 [注册入口](../app/workflows/__init__.py)。runtime.py 与输入/运行工具待建立；只读判断和流程列表/手动分析 API 已接入，见第7节。
+
+create_builtin_registry() 返回独立注册表，目前仅显式注册中士插件且 implementation_ready=False；即使传入全部能力/动作仍不可用。register 在注册时创建一次探测实例，校验 API 版本、参数模型和 async run；工厂应无副作用。prepare 重新创建独立运行实例并校验元数据/参数模型与注册时一致，不调用 run，不自动启动任务。可信工厂不得返回单例或共享可变运行状态；注册器不能证明任意 Python 工厂不存在共享状态。
 
 运行记录固定插件 ID、api_version、内容版本、有效参数、模式和代码/发布标识。接口不兼容时拒绝启动，参数变化需明确兼容范围；不隐式恢复到不同版本代码。不再要求实现旧流程 JSON 读写或迁移器：仓库内删除的 JSON 只是未执行的设计文件，没有实际运行记录需要恢复。
 
@@ -268,4 +231,116 @@ async def agree_trade(ctx, params, trade_page):
 
 后续实现验收至少包含：重复/未知插件、接口版本/参数/能力拒绝、实例隔离、工具返回未知/歧义、目标过期、失焦、停止、超时、预算耗尽、结果不明不重发、独立成功验证，以及 Mock 与真实运行记录区分。静态示例、工具桩、录制回放、真实 OCR、Windows 输入和交互闭环分别记录。
 
-本次只交付文档接口；插件 SDK/运行器/工具、兑换插件实现及宿主机验证保持未完成。原 JSON 文档被本文件替代，不设通用节点图、流程解释器或外部脚本加载的首版任务。
+已交付 SDK/只读判断接入及单元测试源码，仅通过虚拟机静态检查；[tests/test_workflows.py](../tests/test_workflows.py) 由宿主机执行。插件运行器/输入工具实现、兑换交互及宿主机验证保持未完成。原 JSON 文档被本文件替代，不设通用节点图、流程解释器或外部脚本加载的首版任务。
+
+
+### 6.1 当前内部调用示例
+
+以下为执行预检的 Python 方法；执行仍不可用。只读判断另有 prepare_inspection 和 GET /api/workflows，见第7节：
+
+```python
+from app.workflows import create_builtin_registry
+from app.workflows.registry import WorkflowEnvironment
+
+registry = create_builtin_registry()
+environment = WorkflowEnvironment(mode="mock")
+descriptions = registry.describe(environment)
+report = registry.validate(
+    "orbis_charlie_exchange", "1.3.0", {"material_count": 100},
+    environment, task_id="npc_material_exchange",
+)
+# report.valid 为 False：占位实现/能力缺失，不会执行输入。
+```
+
+| 方法 | 返回与边界 |
+| --- | --- |
+| register(factory, implementation_ready=..., unavailable_reason=...) | 返回 None；重复 ID、接口版本、参数模型或 run 签名错误抛 ValueError；尚未实现时必须写明不可用原因 |
+| describe(environment) | tuple[WorkflowDescription, ...]，含 metadata/params_schema/mode/available/unavailable_reasons；按明确的 Mock 或真实环境分别评估 |
+| validate(plugin_id, plugin_version, params, environment, task_id=...) | ValidationReport(valid, reasons)；同时检查注册项、版本、任务归属、严格参数、实现状态和能力/动作 |
+| prepare(同 validate 入参) | PreparedWorkflow(plugin, params)，params 为冻结且已校验的模型；预检不通过抛 WorkflowUnavailable，工厂契约变化抛 ValueError，不执行 run |
+
+WorkflowEnvironment 包含 mode、capabilities、allowed_actions，后两者是 frozenset，由宿主按当前执行模式提供。这里的 available/valid 仅是注册预检：尚未校验实际会话、目标窗口/租约、控制器或任务独立验证器，也未与 EngineService 连接，不能当作真实启动许可。
+
+中士占位 run 仅 await checkpoint 后返回 paused/workflow_not_implemented、空证据和空业务结果；不调用工具、不伪造 Mock 成功。SDK 不改变 EngineService 的 planning/input 能力标记。
+
+
+### 6.2 共用对话感知
+
+[read_dialogue/extract_dialogue](../app/vision/dialogue.py) 只读取样本风格面板、可见 NPC、正文/按钮/材料，不含任务阶段或建议。中士页面规则已移至插件，前端不解释中士字段。感知结果依赖样式与相对布局，真实模型验收待完成。图片3实测no_dialogue_panel后，共用定位器新增优先检测完整矩形边框（嵌套笔画去重/正文亮色校验），无边框候选才走原亮色连通区域；接口和中士判断不变。真实截图几何回归与OCR复测待宿主机执行，静态检查不能记为修复通过。
+
+## 7. 可选的只读单步判断（已编写，宿主机待验证）
+
+执行接口 api_version=1 保留；新增可选 WorkflowEvaluator 协议，不强迫已有执行插件实现，未声明识别可用的插件不会被测试页启用。中士内容版本升为1.3.0。此扩展无需 JSON 流程迁移；不支持的插件版本拒绝选择，不静默替换。
+
+```python
+from app.workflows.inspection import InspectionContext, WorkflowInspection
+
+def evaluate(self, ctx: InspectionContext, params: Params) -> WorkflowInspection:
+    # 调用共用感知和同一个业务判断函数；不执行输入。
+    ...
+```
+
+该入口为同步函数，在后台识别工作内运行；ctx 是冻结 dataclass，只有 snapshot、perception、deadline_monotonic、checkpoint()。snapshot 绑定画面和基础信息，未知字段保留未知；perception 提供 dialogue()/npc_name(name) 的只读接口，按本次快照缓存。没有 WorkflowContext.tools、键鼠、输入绑定或执行租约；不能把运行上下文传来再用开关禁止点击。可信 Python 仍非沙箱，不能声称可以防止任意脚本越权或阻塞。
+
+当前 ctx 不接收人工填写的前序状态，也不自动保留跨截图身份。缺少历史证据就返回缺失条件；未来运行协调器若传历史，需另定义来源/时效/会话关联，不把一张成功页推断为已完成整轮。
+
+### 7.1 注册、发现和请求
+
+register 新增 inspection_ready=False、inspection_capabilities=()；声明就绪时必须存在同步 evaluate。执行 implementation_ready/required_capabilities/allowed_actions 保留独立；只读预检不要求输入能力。describe 新增 inspection_available 与 inspection_unavailable_reasons，available 仍表示执行兼容预检。
+
+prepare_inspection(plugin_id, plugin_version, params, environment) 校验插件、版本、识别能力与严格参数，返回 PreparedInspection(plugin: WorkflowEvaluator, params) 新实例，不调用 run。参数最多64个键/16 KiB 有限 JSON 对象。当前宿主声明 dialogue_reading/npc_name_reading（表示实现存在，模型运行仍可能失败）；GET /api/workflows 输出注册描述/参数 schema 与两种可用性，中士可识别但不可执行。
+
+图片/视频分析入口接收以下对象，workflow 可省略或为 null；VisionProfile 仍支持作为基础模式请求体，供现有调用者使用，不恢复任何旧视觉配置字段：
+
+```json
+{
+  "profile": {"reference_size": [1382, 807]},
+  "workflow": {
+    "plugin_id": "orbis_charlie_exchange",
+    "plugin_version": "1.3.0",
+    "params": {"material_name": "僵尸丢失的臼齿", "material_count": 100}
+  }
+}
+```
+
+基础识别始终运行；未选流程不做对话 OCR。选择后在同一工作内调用 evaluate；工具重复读取只缓存本帧，不跨请求共享。截止时间60秒只在检查点执行，无法强行中断模型。错误选择/参数在感知前以422拒绝，工厂契约变化409；插件内部异常、超时、坏返回或错帧标注产生无意图的unknown结果，基础识别保留。
+
+### 7.2 标准返回值
+
+类型与验证见 [inspection.py](../app/workflows/inspection.py)。ObservationResult.workflow_inspection 可空；dialogue 是按需读取后的诊断数据，可空，不再含流程 page/suggested_action/target_bbox。
+
+| 字段 | 类型与含义 |
+| --- | --- |
+| plugin_id/plugin_version/observation_id | 引擎校验与所选插件/本次快照一致 |
+| status | found/not_found/unknown/ambiguous，非 found 禁止意图 |
+| stage_id/stage_label | 稳定阶段ID与显示名称；未知时 unknown/未知阶段 |
+| fields | 最多64项 key/label/value；value 为字符串（≤2048字）、有限数值、布尔或null。当前不支持嵌套业务字段，复杂内容由插件摘要 |
+| annotations | 最多64项 id/label/kind/bbox，kind为region/candidate/target，原图xywh；ID唯一，框需为正且在本帧内 |
+| intent | 可空；kind为click/scroll/wait/observe，label/reason、可空target_id；execution_authorized恒false，引用必须存在，不是ActionPlan |
+| missing_conditions | 最多32条缺失条件，每条1–256字；例如 NPC 身份不明或尚未验证关闭 |
+| diagnostics | 最多64条诊断，每条1–256字；包含感知原因/原文/分数，不输出内部异常或凭据 |
+| processing_ms | 引擎计算本次判断及感知耗时，不代表端到端延迟或准确率 |
+
+通用前端自动渲染字段/阶段/诊断及标注；参数 schema 为常规标量/枚举时生成表单，其他形状使用 JSON 对象编辑，默认值来自参数模型。新增流程在该契约内只需新增插件及显式注册，无需改测试页；新感知工具或展示类型仍须扩展相应契约与实现。
+
+### 7.3 中士规则与执行边界
+
+[decide_exchange](../app/workflows/builtin/charlie_decision.py) 是唯一阶段/意图函数，evaluate 调用它。未来自动运行应复用相同函数并通过执行层验证意图，不能另写一套测试专用判断。本次 run 仍是不可用占位，没有宣称已实现自动运行复用或真实闭环。
+
+参数决定目标 NPC/材料/数量与搜索预算；通用感知无中士关键词。没有本帧 NPC 标签时明确未知，缺少可信身份上下文；明确不匹配、页面冲突/低分/重复目标不产生操作意图。成功页仅提示结束对话/等待，标记尚未验证关闭。意图即使存在仍不授权执行，未来运行必须核验身份/窗口/租约/时效并将意图转为受控计划，不直接执行标签字符串。
+
+验收区分通用感知、单步判断、注册/API、前端类型、真实 OCR 和交互。当前新增第二插件字段、错误隔离、缓存、身份/歧义/低分、参数/版本拒绝及同帧测试源码；宿主机运行、真实样本和页面验收待完成。
+
+
+### 7.4 初始场景的 NPC 标签查询
+
+新增 ReadOnlyPerception.npc_name(name: str) -> SceneNameReading，使用同帧配置scene范围/UI排除区、完整名字匹配和独立读取的候选文字。查询目标是参数，结果仅在唯一高分匹配时确认，不能把参数本身写成已识别NPC；规范化查询缓存最多8个名字，不跨快照复用。未配置范围时unknown/scene_not_configured。
+
+中士1.3.0只在no_dialogue_panel分支调用该能力；对话未知/歧义不回退。名字查询成功后按第7.5节继续验证外观，不直接以名字框生成点击意图；名字失败阶段search_npc，无意图。execution_authorized仍恒false，真实OCR和图1验收待完成。插件注册新增npc_name_reading要求，执行能力保持禁用。
+
+
+### 7.5 NPC 外观人物框
+
+只读接口新增npc_body(name: str) -> BodyReading，本版仅支持注册中士外观，缓存当前快照结果，复用npc_name查询。宿主/注册识别能力增加npc_body_matching；玩家模板配置不控制NPC模板。模板来自samples/tasks/1.png帽子到鞋(411,408,50,69)，名字上方200×150搜索、阈值0.85，输出实际匹配框/候选/搜索区/版本而非名字固定偏移。
+
+中士1.3.0仅在名字和外观都确认时提议点击npc_body标注，并显示候选矩形中心。名字确认而外观未确认时stage_id=locate_npc_body，无点击意图；此前仅名字就提议交互的行为取消。名字框仍作为诊断，不能退回它作为点击目标。模板框可能包含背景，非精确hitbox；执行、距离/窗口/关闭校验及真实可点击性尚未实现/验证。

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { visionRequest } from '../vision'
-import type { ImportedImage, ObservationResult, NumericReading, NameReading, Rect, VisionProfile } from '../vision'
+import WorkflowInspectionResult from './WorkflowInspectionResult.vue'
+import type { ImportedImage, ObservationResult, NumericReading, NameReading, Rect, VisionProfile, WorkflowDescription, ParameterProperty } from '../vision'
 
 const props = withDefaults(defineProps<{ mode?: 'analyze' | 'configure' }>(), { mode: 'analyze' })
 const configuring = computed(() => props.mode === 'configure')
@@ -21,6 +22,35 @@ const regionLabels: Record<RegionKind, string> = {
 const image = ref<ImportedImage | null>(null)
 const profile = ref<VisionProfile | null>(null)
 const result = ref<ObservationResult | null>(null)
+const workflows = ref<WorkflowDescription[]>([])
+const workflowId = ref('')
+const workflowParams = ref<Record<string, unknown>>({})
+const advancedParams = ref('{}')
+const selectedWorkflow = computed(() => workflows.value.find(item => item.metadata.id === workflowId.value))
+const parameterProperties = computed(() => selectedWorkflow.value?.params_schema.properties ?? {})
+const simpleParams = computed(() => Object.values(parameterProperties.value).every(schema =>
+  ['string', 'integer', 'number', 'boolean'].includes(schema.type ?? ''),
+))
+const inspectionAnnotations = computed(() => result.value?.workflow_inspection?.annotations ?? [])
+watch(workflowId, () => {
+  const defaults: Record<string, unknown> = {}
+  for (const [key, schema] of Object.entries(parameterProperties.value)) {
+    if ('default' in schema) defaults[key] = JSON.parse(JSON.stringify(schema.default))
+  }
+  workflowParams.value = defaults
+  advancedParams.value = JSON.stringify(defaults, null, 2)
+  result.value = null
+})
+watch([workflowParams, advancedParams], () => { result.value = null }, { deep: true })
+function setWorkflowParam(key: string, schema: ParameterProperty, event: Event) {
+  const input = event.target as HTMLInputElement
+  if (schema.type === 'boolean') workflowParams.value[key] = input instanceof HTMLInputElement ? input.checked : input.value === 'true'
+  else if (schema.type === 'integer' || schema.type === 'number') {
+    if (input.value === '') delete workflowParams.value[key]
+    else workflowParams.value[key] = Number(input.value)
+  } else workflowParams.value[key] = input.value
+}
+
 const target = ref<RegionKind>('hp_text')
 const editor = ref<SVGSVGElement | null>(null)
 const busy = ref(false)
@@ -256,7 +286,20 @@ async function analyze() {
   if (!current || !profile.value || !canAnalyze.value) return
   result.value = null
   analyzing.value = true
-  const body = JSON.stringify(profile.value)
+  let params: Record<string, unknown>
+  try {
+    const parsed = simpleParams.value ? workflowParams.value : JSON.parse(advancedParams.value)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error()
+    params = parsed
+  } catch {
+    error.value = '流程参数必须是有效的 JSON 对象。'
+    analyzing.value = false
+    return
+  }
+  const selected = selectedWorkflow.value
+  const body = JSON.stringify({ profile: profile.value, workflow: selected ? {
+    plugin_id: selected.metadata.id, plugin_version: selected.metadata.version, params,
+  } : null })
   await perform(async signal => {
     const next = await visionRequest<ObservationResult>(`/api/images/${current.image_id}/analyze`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal,
@@ -283,10 +326,14 @@ async function save() {
 onMounted(() => {
   window.addEventListener('pagehide', pageExit)
   void perform(async signal => {
-    const next = await visionRequest<VisionProfile>('/api/vision/profile', { signal })
+    const [next, catalog] = await Promise.all([
+      visionRequest<VisionProfile>('/api/vision/profile', { signal }),
+      visionRequest<WorkflowDescription[]>('/api/workflows', { signal }),
+    ])
     if (!disposed) {
       savedProfile.value = JSON.stringify(next)
       profile.value = next
+      workflows.value = catalog
     }
   })
 })
@@ -310,6 +357,35 @@ onBeforeUnmount(() => {
       <button v-if="configuring" class="secondary" :disabled="!image || !profile || busy || Boolean(mismatch)" @click="save">保存区域配置</button>
       <a v-else class="text-link" href="#settings">区域设置</a>
     </div>
+    <fieldset class="workflow-selector" :disabled="busy">
+      <legend>流程识别（可选）</legend>
+      <label>选择流程
+        <select v-model="workflowId">
+          <option value="">仅基础信息</option>
+          <option v-for="item in workflows" :key="item.metadata.id" :value="item.metadata.id" :disabled="!item.inspection_available">{{ item.metadata.name }}{{ item.inspection_available ? '' : '（识别不可用）' }}</option>
+        </select>
+      </label>
+      <template v-if="selectedWorkflow">
+        <p class="detail">{{ selectedWorkflow.metadata.description }}</p>
+        <p v-if="!selectedWorkflow.available" class="detail">自动执行未就绪；可独立测试识别。</p>
+        <details class="workflow-settings"><summary>流程参数</summary>
+        <div v-if="simpleParams" class="workflow-parameters">
+          <label v-for="(schema, key) in parameterProperties" :key="key" :title="schema.description">
+            {{ schema.title || key }}
+            <select v-if="schema.enum" :value="workflowParams[key]" @change="setWorkflowParam(String(key), schema, $event)">
+              <option v-for="value in schema.enum" :key="String(value)" :value="value">{{ value }}</option>
+            </select>
+            <input v-else-if="schema.type === 'boolean'" type="checkbox" :checked="Boolean(workflowParams[key])" @change="setWorkflowParam(String(key), schema, $event)" />
+            <input v-else :type="schema.type === 'string' ? 'text' : 'number'" :value="workflowParams[key] as string | number | undefined"
+              :min="schema.minimum" :max="schema.maximum" :minlength="schema.minLength" :maxlength="schema.maxLength"
+              :step="schema.type === 'integer' ? 1 : 'any'" @input="setWorkflowParam(String(key), schema, $event)" />
+          </label>
+        </div>
+        <label v-else>参数（JSON 对象）<textarea v-model="advancedParams" rows="6" /></label>
+        </details>
+      </template>
+      <p v-for="item in workflows.filter(item => !item.inspection_available)" :key="item.metadata.id" class="detail">{{ item.metadata.name }}：{{ item.inspection_unavailable_reasons.join('；') }}</p>
+    </fieldset>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="configuring && notice" class="detail" role="status">{{ notice }}</p>
     <div v-if="mismatch" class="size-warning">
@@ -329,6 +405,13 @@ onBeforeUnmount(() => {
             @pointerup="endDrag" @pointercancel="drag = null">
             <image :href="preview" :width="image.width" :height="image.height"
               @load="ready = true" @error="ready = false; error = '预览已失效，请重新上传。'" />
+            <g class="dialogue-overlays">
+              <g v-for="box in inspectionAnnotations" :key="box.id">
+                <title>{{ box.label }}</title>
+                <rect :x="box.bbox[0]" :y="box.bbox[1]" :width="box.bbox[2]" :height="box.bbox[3]"
+                  :class="box.id === result?.workflow_inspection?.intent?.target_id ? 'dialogue-target-box' : box.kind === 'region' ? 'dialogue-panel-box' : 'dialogue-candidate-box'" />
+              </g>
+            </g>
             <template v-for="kind in regions" :key="kind">
               <rect v-if="profile[kind]" :x="profile[kind]?.x" :y="profile[kind]?.y"
                 :width="profile[kind]?.width" :height="profile[kind]?.height"
@@ -409,7 +492,8 @@ onBeforeUnmount(() => {
         </fieldset>
       </div>
       <aside class="card recognition-info" aria-label="识别信息" aria-live="polite" :aria-busy="analyzing">
-        <h3>识别信息</h3>
+        <WorkflowInspectionResult :reading="result?.workflow_inspection ?? null" :loading="analyzing" :selected-name="selectedWorkflow?.metadata.name ?? ''" />
+        <h3>基础信息</h3>
         <dl class="recognition-values">
           <div>
             <dt>角色名称</dt>
